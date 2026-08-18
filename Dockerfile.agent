@@ -1,0 +1,27 @@
+# ANANSI agent — the scheduler: sense → diagnose → heal → verify → promote.
+# The only writer to the data volume. No domain, no exposed port; the console
+# is how you watch it.
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+
+# The Bright Data CLI is only needed for the real adapter, and installing it is
+# opt-in so this image always builds before the account exists:
+#   docker build --build-arg WITH_BRIGHTDATA_CLI=true -f Dockerfile.agent .
+ARG WITH_BRIGHTDATA_CLI=false
+RUN if [ "$WITH_BRIGHTDATA_CLI" = "true" ]; then \
+      npm install -g @brightdata/cli --no-audit --no-fund; \
+    fi
+
+COPY package.json package-lock.json* ./
+RUN npm install --omit=dev --no-audit --no-fund
+COPY tsconfig.json ./
+COPY packages/core/ ./packages/core/
+COPY packages/adapters/ ./packages/adapters/
+COPY apps/agent/ ./apps/agent/
+COPY contracts/ ./contracts/
+
+# Rehearsal by default: real fetches of the Lab, simulated heals, no credits.
+# Set ANANSI_ADAPTER= (empty/unset) for the real CLI once the collector exists.
+ENV ANANSI_DATA=/data ANANSI_ADAPTER=live ANANSI_CONTRACTS=/app/contracts
+CMD ["npx", "tsx", "apps/agent/main.ts"]
