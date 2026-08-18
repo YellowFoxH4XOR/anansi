@@ -3,7 +3,7 @@
 # and set ANANSI_LAB_BASE (e.g. the Coolify domain) and the scheduler rewrites
 # the origin at load time. collector_id: fill in after `brightdata scraper create`.
 scraper: lab-storefront
-collector_id: null
+collector_id: c_msyy76jk20f9e9mrh5
 canaries:
   - url: https://anansi-lab.vercel.app/product/echo-speaker
     goldens:

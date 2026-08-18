@@ -7,3 +7,8 @@ dist/
 .vercel/
 data/
 coverage/
+
+# Bright Data CLI artifacts (collector ids live in contracts/, not here)
+create.json
+heal*.json
+out.json
