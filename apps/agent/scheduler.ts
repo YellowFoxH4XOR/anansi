@@ -29,21 +29,21 @@ export class Scheduler {
     const name = contract.scraper;
     if (this.running.has(name)) return;
 
-    const state = store.collectorState(name);
-    if (state !== "healthy" && state !== "watching") {
-      this.log(`[${name}] state=${state} — skipping sweep`);
-      return;
-    }
-
-    // Budget guard: never open spend when the balance is at the floor.
-    const balance = await bd.budgetBalance();
-    if (balance != null && balance < BUDGET_FLOOR) {
-      this.log(`[${name}] budget balance ${balance} below floor ${BUDGET_FLOOR} — refusing to spend`);
-      return;
-    }
-
     this.running.add(name);
     try {
+      const state = store.collectorState(name);
+      if (state !== "healthy" && state !== "watching") {
+        this.log(`[${name}] state=${state} — skipping sweep`);
+        return;
+      }
+
+      // Budget guard: never open spend when the balance is at the floor.
+      const balance = await bd.budgetBalance();
+      if (balance != null && balance < BUDGET_FLOOR) {
+        this.log(`[${name}] budget balance ${balance} below floor ${BUDGET_FLOOR} — refusing to spend`);
+        return;
+      }
+
       const records: RunRecord[] = [];
       for (const c of contract.canaries) {
         const raw = await bd.runSync(deps.collectorId, c.url);
@@ -57,8 +57,7 @@ export class Scheduler {
       if (result.kind === "healthy") {
         for (const r of records) await store.appendRun({ ...r, scraper: name, healthy: true });
         this.lastHealthySweep.set(name, records);
-        if (state === "watching") await store.setCollectorState(name, "healthy");
-        if (result.warnings.length) {
+        if (state === "watching") await store.setCollectorState(name, "healthy");        if (result.warnings.length) {
           this.log(`[${name}] healthy with warnings: ${result.warnings.map((w) => `${w.signal}:${w.field ?? ""}`).join(", ")}`);
         }
         return;
@@ -68,6 +67,14 @@ export class Scheduler {
       this.log(`[${name}] INCIDENT (${result.route}): ${result.signals.map((v) => `${v.signal}${v.field ? `:${v.field}` : ""}`).join(", ")}`);
       const baseline = this.lastHealthySweep.get(name) ?? [];
       await driveIncident(result, contract, baseline, { ...deps, log: this.log });
+    } catch (err) {
+      // A CLI or transport failure is not a page-shape problem, so it never
+      // reaches evaluate(): the taxonomy calls this transient platform noise
+      // and the sweep is simply retried on the next tick. Without this catch
+      // the rejection escapes start()'s `void` call, becomes an unhandled
+      // rejection, and kills the agent — turning one 429 into a restart loop.
+      const first = (err as Error).message.split("\n")[0];
+      this.log(`[${name}] sweep failed: ${first} — retrying next tick`);
     } finally {
       this.running.delete(name);
     }

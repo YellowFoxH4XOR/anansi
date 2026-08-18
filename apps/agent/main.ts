@@ -42,7 +42,18 @@ async function main(): Promise<void> {
       const cadence = Number(process.env.ANANSI_CADENCE_MINUTES);
       if (Number.isFinite(cadence) && cadence > 0) contract.cadence_minutes = cadence;
 
+      // A missing collector_id is a configuration error, not a runtime state.
+      // In real mode every call would be `scraper run UNSET`, which the platform
+      // answers 404 forever, so say so once and clearly rather than rediscovering
+      // it on every tick.
       if (!contract.collector_id) {
+        if (mode === "real") {
+          console.error(
+            `FATAL [${contract.scraper}]: adapter=real needs a collector_id. ` +
+              `Run 'brightdata scraper create', put the returned id in contracts/${f}, and redeploy.`,
+          );
+          process.exit(1);
+        }
         console.warn(`[${contract.scraper}] no collector_id in contract — set it after 'brightdata scraper create'`);
       }
       // Rehearsal mode needs this contract's canary list to build heal preview
