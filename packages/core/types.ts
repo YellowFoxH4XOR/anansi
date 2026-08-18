@@ -1,0 +1,116 @@
+// Shared plain-data types. Everything in core/ is pure: no network, no clock, no I/O.
+
+export type FieldSpec = {
+  type: "string" | "number";
+  required: boolean;
+  min?: number;
+  max?: number;
+  min_len?: number;
+};
+
+export type GoldenString = {
+  value: string;
+  similarity_min: number;
+  similarity_metric: "token_set_ratio";
+};
+export type GoldenNumber = { value: number; tolerance_pct: number };
+export type GoldenEnum = { one_of: string[] };
+export type GoldenSpec = GoldenString | GoldenNumber | GoldenEnum;
+
+export type Canary = { url: string; goldens: Record<string, GoldenSpec> };
+
+export type Contract = {
+  scraper: string;
+  collector_id?: string;
+  canaries: Canary[];
+  fields: Record<string, FieldSpec>;
+  invariants: string[];
+  fill_rate_min: number;
+  cadence_minutes: number;
+  exclude_fields_containing_pii?: boolean;
+};
+
+// One canary row as it comes back from a run (snapshot already stripped to a ref).
+export type RunRecord = {
+  url: string; // collected input.url — every row must be attributable
+  fields: Record<string, unknown>;
+  error_code?: string;
+  snapshot_ref?: string;
+  ts: number;
+};
+
+// Historical numeric observations for CUSUM: per field, per URL, oldest first.
+export type FieldHistory = Record<string, Record<string, number[]>>;
+
+export type SignalClass =
+  | "hard_fail"
+  | "contract"
+  | "fill_rate"
+  | "golden_band"
+  | "cusum"
+  | "invariant";
+
+// Where an incident is routed (docs/brightdata-notes.md routing table; ADR-003).
+export type Route = "heal" | "infra" | "retry" | "dead" | "config";
+
+export type Violation = {
+  signal: SignalClass;
+  field?: string;
+  url?: string;
+  detail: string;
+};
+
+export type Incident = {
+  kind: "incident";
+  scraper: string;
+  route: Route;
+  signals: Violation[];
+  records: RunRecord[];
+  snapshot_refs: string[];
+};
+
+export type Healthy = { kind: "healthy"; warnings: Violation[] };
+export type SenseResult = Incident | Healthy;
+
+// Per-collector state machine (architecture.md).
+export type CollectorState =
+  | "healthy"
+  | "incident_open"
+  | "healing"
+  | "verifying"
+  | "watching"
+  | "quarantined";
+
+export type GateResult = { gate: string; pass: boolean; detail: string };
+
+export type Verdict = {
+  pass: boolean; // conjunction of all hard gates — never a score threshold
+  gates: GateResult[];
+  confidence: number; // weighted per-field pass fraction, audit/UI only
+};
+
+export type HealAttempt = {
+  prompt: string;
+  diff_summary: string;
+  verdict?: Verdict;
+  phase: "v1" | "v2";
+  ts: number;
+};
+
+export type IncidentRecord = {
+  id: string;
+  scraper: string;
+  opened_at: number;
+  closed_at?: number;
+  signal: Violation[];
+  route: Route;
+  evidence_ref?: string;
+  last_good_ref?: string; // snapshot refs powering the console's split diff
+  current_ref?: string;
+  prompt?: string;
+  heal_attempts: HealAttempt[];
+  resolution?: "promoted" | "quarantined" | "rolled_back" | "infra" | "dead";
+  credits_spent: number;
+  wall_ms?: number;
+  approved_by?: "gate" | "human";
+};
