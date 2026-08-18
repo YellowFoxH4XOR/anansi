@@ -128,8 +128,10 @@ export function evaluate(
     }
   }
 
-  // 6 · Invariants — cross-field asserts.
-  for (const r of ok) violations.push(...checkInvariants(contract.invariants, r.fields, r.url));
+  // 6 · Invariants — cross-field asserts. Declared field names are passed so an
+  // absent optional field binds as null rather than throwing.
+  const declaredFields = Object.keys(contract.fields);
+  for (const r of ok) violations.push(...checkInvariants(contract.invariants, r.fields, r.url, declaredFields));
 
   if (violations.length === 0) {
     return { result: { kind: "healthy", warnings }, flags: nextFlags };

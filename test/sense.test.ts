@@ -148,6 +148,18 @@ describe("evaluate — the five signals", () => {
     }
   });
 
+  it("an absent optional field satisfies a null-guarded invariant", () => {
+    // Production rows omit sale_price entirely rather than sending null (the
+    // output schema only emits declared fields). `sale_price == null` is written
+    // to allow exactly that, so an absent optional field must not fail closed.
+    const records = healthySweep().map((r) => {
+      const { sale_price, ...rest } = r.fields as Record<string, unknown>;
+      return { ...r, fields: rest };
+    });
+    const { result } = evaluate(contract, records);
+    expect(result.kind).toBe("healthy");
+  });
+
   it("invariant: sale_price above price fails", () => {
     const records = healthySweep().map((r) => ({ ...r, fields: { ...r.fields, sale_price: 999 } }));
     const { result } = evaluate(contract, records);
