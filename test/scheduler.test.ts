@@ -14,6 +14,7 @@ import { parseContract } from "../packages/core/sense/contract.js";
 import { Store } from "../packages/adapters/store/index.js";
 import { TemplateLlm } from "../packages/adapters/llm/index.js";
 import { Scheduler } from "../apps/agent/scheduler.js";
+import { rawToRun } from "../apps/agent/incident.js";
 import type { BrightDataAdapter, HealResponse, RawRow } from "../packages/adapters/brightdata/types.js";
 
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
@@ -89,5 +90,33 @@ describe("scheduler resilience", () => {
     // A leaked `running` entry would make every later tick a silent no-op.
     await sched.sweepOnce(sched["scrapers"][0]!);
     expect(bd.calls).toBeGreaterThan(afterFirst);
+  });
+});
+
+describe("platform row normalisation", () => {
+  it("reads the snapshot from Studio's page_html and keeps it out of fields", async () => {
+    // Shape taken verbatim from a live c_msyy76jk20f9e9mrh5 run.
+    const row = {
+      url: "https://anansi-lab.akshatkatiyar.com/product/echo-speaker",
+      title: "Echo Portable Speaker",
+      price: 49.99,
+      sale_price: null,
+      availability: "in stock",
+      page_html: '<html><span class="price">$49.99</span></html>',
+      page_html_url: "https://anansi-lab.akshatkatiyar.com/product/echo-speaker",
+    };
+    const run = await rawToRun(row, store, 1);
+
+    expect(run.snapshot_ref).toBeDefined();
+    expect(run.url).toBe(row.url);
+    // A 15KB document arriving as a scraped field would corrupt fill-rate,
+    // PII and invariant checks, so both tag keys must be stripped.
+    expect(Object.keys(run.fields).sort()).toEqual(["availability", "price", "sale_price", "title"]);
+  });
+
+  it("still accepts _snapshot_html from the fake and live adapters", async () => {
+    const run = await rawToRun({ url: "u", title: "t", _snapshot_html: "<html>x</html>" }, store, 1);
+    expect(run.snapshot_ref).toBeDefined();
+    expect(Object.keys(run.fields)).toEqual(["title"]);
   });
 });

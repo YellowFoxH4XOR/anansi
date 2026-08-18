@@ -11,7 +11,7 @@ import type { Contract, Incident, IncidentRecord, RunRecord } from "../../packag
 import { buildEvidence, type EvidencePack } from "../../packages/core/diagnose/evidence.js";
 import { verifyV1, type PreviewRow } from "../../packages/core/verify/v1.js";
 import { verifyV2 } from "../../packages/core/verify/v2.js";
-import { previewRows, type BrightDataAdapter, type RawRow } from "../../packages/adapters/brightdata/types.js";
+import { previewRows, splitRow, type BrightDataAdapter, type RawRow } from "../../packages/adapters/brightdata/types.js";
 import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
 import { Store, type StoredRun } from "../../packages/adapters/store/index.js";
 
@@ -26,8 +26,8 @@ export type IncidentDeps = {
 };
 
 export async function rawToRun(raw: RawRow, store: Store, ts: number): Promise<RunRecord> {
-  const { _snapshot_html, url, error_code, ...fields } = raw;
-  const snapshot_ref = _snapshot_html ? await store.saveSnapshot(_snapshot_html) : undefined;
+  const { snapshotHtml, url, error_code, fields } = splitRow(raw);
+  const snapshot_ref = snapshotHtml ? await store.saveSnapshot(snapshotHtml) : undefined;
   return { url: url ?? "unknown", fields, error_code, snapshot_ref, ts };
 }
 
@@ -119,7 +119,7 @@ export async function driveIncident(
 
     // V1 · pre-approval gate on preview rows.
     const rows: PreviewRow[] = previewRows(heal).map((r) => {
-      const { _snapshot_html, url, error_code, ...fields } = r;
+      const { url, fields } = splitRow(r);
       return { url, fields };
     });
     const v1 = verifyV1(contract, rows, currentSnapshots, failingFields);

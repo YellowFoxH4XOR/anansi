@@ -9,9 +9,9 @@
 //
 // Load-bearing requirements, from docs/brightdata-notes.md:
 //   1. tag_html() runs on EVERY page load (snapshot source for the diff
-//      pipeline). The tagged value is NOT a bare `html` variable: parser code
-//      reads it as `parser.page_html`, and the parser must return it in a
-//      collected field or ANANSI never sees a snapshot.
+//      pipeline). Scraper Studio surfaces the tag under its own name, so the
+//      run output carries `page_html` (plus an auto-added `page_html_url`)
+//      without the parser having to return it. Verified against a live run.
 //   2. input.url is returned on every row so heal preview rows are
 //      attributable to a canary (heal's --url is cosmetic; preview_result is
 //      backend-chosen sample rows).
@@ -60,10 +60,11 @@ const firstText = (sel) => {
 };
 
 return {
-  // Attribution + snapshot: the two fields ANANSI cannot live without.
+  // Attribution: heal preview rows are useless without it.
   url: input.url,
-  _snapshot_html: parser.page_html, // the tag_html('page_html') capture
-
+  // NOTE: the DOM snapshot is NOT returned here. tag_html('page_html') above
+  // already puts `page_html` in the output; returning a second copy under
+  // another name only risks the output schema dropping it (it did).
   title: firstText('h1.title'),
   // Deliberately the naive selector: first .price on the page. M1 nulls it,
   // M2 makes it silently wrong ($12.99 cross-sell) — that's the demo.

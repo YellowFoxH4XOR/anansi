@@ -58,10 +58,11 @@ contact@wemakedevs.org.
 
 ## IDE functions we deliberately exercise (Web-Slinger surface table)
 
-`tag_html()` every canary (snapshot source — **tagged values reach parser code only; the
-parser must explicitly `collect()` them into an output field** (`_snapshot_html`, plus
-`input.url` for row attribution) or the diff pipeline never sees a snapshot; confirm the
-round-trip in the D1 smoke test) · `tag_response()` (S3 XHR heal, if it survives cuts) ·
+`tag_html()` every canary (snapshot source — **VERIFIED on a live run: parser code reads a
+tag as `parser.<name>`, and Studio exports it as a `<name>` output field automatically
+(plus `<name>_url`), so the parser must NOT also return it under another name — the output
+schema drops the duplicate**; `input.url` is returned explicitly for row attribution) ·
+`tag_response()` (S3 XHR heal, if it survives cuts) ·
 `next_stage()` (books list→detail) · `collect(validate_fn)` (contract pushed into the
 scraper) · `detect_block()` (triage semantics) · `close_popup()` (M3 heal target) ·
 `load_more()` (S4) · error taxonomy consumed end-to-end · Versions for rollback

@@ -47,11 +47,12 @@ anansi/
 ## Data flow, one incident
 
 1. Scheduler fires a canary sweep — 3–5 individual `scraper run --sync` calls (`--sync` is
-   single-URL; multiple URLs route to the async batch endpoint). The scraper explicitly
-   `collect()`s two extra output fields: `_snapshot_html` (the `tag_html()` capture — tagging
-   alone reaches only parser code, it does NOT auto-export) and `input.url` (so every row,
-   including heal preview rows, is attributable to a canary). Snapshots are stored, then
-   stripped before contract evaluation.
+   single-URL; multiple URLs route to the async batch endpoint). The run output carries two
+   extra fields beyond the contract's: the `tag_html()` DOM capture, which Studio surfaces
+   under the tag's own name (`page_html`, alongside an auto-added `page_html_url`), and
+   `input.url` (so every row, including heal preview rows, is attributable to a canary).
+   `splitRow()` at the adapter seam normalises the snapshot key and strips it, so snapshots
+   are stored but never reach contract evaluation.
 2. `sense.evaluate(records, contract, history)` → `Incident | Healthy`. An Incident carries:
    failing fields, signal class (hard-fail / contract / fill-rate / band / CUSUM / invariant),
    raw records, snapshot refs.
