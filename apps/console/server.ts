@@ -6,10 +6,11 @@ import express from "express";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Store } from "../../packages/adapters/store/index.js";
-import type { CollectorState, GateResult, IncidentRecord } from "../../packages/core/types.js";
+import type { CollectorState, IncidentRecord } from "../../packages/core/types.js";
 import { normalizeHtml } from "../../packages/core/diagnose/normalize.js";
 import type { EvidencePack } from "../../packages/core/diagnose/evidence.js";
-import { diffPage, fleetStrip, indexPage, layout, tracePage, type Page, type StageView } from "./views.js";
+import { diffPage, fleetStrip, indexPage, layout, tracePage, type Page } from "./views.js";
+import { stagesFor } from "./stages.js";
 
 const store = new Store(process.env.ANANSI_DATA ?? "data");
 await store.init();
@@ -28,71 +29,6 @@ function incidentEvents(id: string): Record<string, unknown>[] {
   return store.auditLog().filter((e) => e.id === id);
 }
 
-function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]): StageView[] {
-  const by = (ev: string) => events.filter((e) => e.event === ev);
-  const last = (ev: string) => by(ev)[by(ev).length - 1];
-  const open = rec.resolution == null;
-
-  const stages: StageView[] = [];
-  stages.push({
-    name: "1 · SENSE",
-    status: "done",
-    meta: rec.signal.map((s) => `${s.signal}${s.field ? `:${s.field}` : ""} — ${s.detail}`).join("  ·  "),
-  });
-
-  if (rec.route !== "heal") {
-    stages.push({
-      name: "TRIAGE — infra lane",
-      status: rec.route === "retry" ? "done" : "fail",
-      meta: `error routed to ${rec.route} lane; healing is ${rec.route === "infra" ? "refused (ADR-003: access problems are never healed)" : "not applicable"}`,
-    });
-    return stages;
-  }
-
-  const healStarts = by("heal_start");
-  stages.push({
-    name: "2 · DIAGNOSE",
-    status: healStarts.length ? "done" : open ? "live" : "fail",
-    meta: rec.prompt ? `auto-generated heal prompt (${rec.prompt.length} chars): "${rec.prompt}"` : "building evidence pack…",
-  });
-
-  const v1 = last("verify_v1");
-  stages.push({
-    name: "3 · HEAL (brightdata scraper heal)",
-    status: v1 ? "done" : healStarts.length && open ? "live" : healStarts.length ? "done" : "pending",
-    meta: healStarts.length
-      ? `${healStarts.length} attempt(s) · stops at the approval gate (never --auto-approve)`
-      : "waiting on diagnosis",
-  });
-
-  stages.push({
-    name: "4 · VERIFY V1 — preview vs contract + goldens",
-    status: v1 ? ((v1.pass as boolean) ? "done" : "fail") : "pending",
-    meta: v1 ? `confidence ${(v1.confidence as number).toFixed(2)} (audit-only; promotion is a conjunction of gates)` : "awaiting preview rows",
-    gates: (v1?.gates as GateResult[] | undefined) ?? undefined,
-  });
-
-  const approved = by("approved").length > 0;
-  const v2 = last("verify_v2");
-  stages.push({
-    name: "5 · PROMOTE (scraper approve)",
-    status: approved ? "done" : rec.resolution === "quarantined" ? "fail" : open ? "pending" : "fail",
-    meta: approved ? "gate passed — fix promoted to production" : rec.resolution === "quarantined" ? "2 failed heals — rejected pending fix, human paged" : "blocked on V1",
-  });
-
-  stages.push({
-    name: "VERIFY V2 — full canary sweep post-approval",
-    status: v2 ? ((v2.pass as boolean) ? "done" : "fail") : approved && open ? "live" : "pending",
-    meta: v2
-      ? (v2.pass as boolean)
-        ? `sweep clean · incident closed · collector watching${(v2.repin_flags as unknown[])?.length ? " · ⚑ golden re-pin flagged for human" : ""}`
-        : "REGRESSION — roll back via the dashboard Versions menu (no CLI rollback exists), collector quarantined"
-      : "runs after promotion",
-    gates: (v2?.gates as GateResult[] | undefined) ?? undefined,
-  });
-
-  return stages;
-}
 
 async function diffPayload(rec: IncidentRecord) {
   const pretty = (html: string) => normalizeHtml(html).toString().replaceAll("><", ">\n<");
