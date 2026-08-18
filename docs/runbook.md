@@ -58,6 +58,29 @@ only with hours to spare.
 > Calendar check (verified): Aug 17, 2026 is a Monday, so the window is Mon 17 → Sun 23 —
 > a clean 7 days, no shifting needed. Still confirm the exact start/end *times* on Discord.
 
+## Recovering a quarantined collector
+
+Quarantine is deliberate and sticky: `sweepOnce` skips any collector that is not
+`healthy`/`watching`, so the agent stays dormant until an operator clears it
+(ADR-002 — the gate does not self-open). After fixing the underlying cause:
+
+```bash
+# in the agent container
+npm run collector:reset -- lab-storefront "saved corrected Studio version"
+```
+
+It returns the state machine to `healthy` and clears the fill-rate/CUSUM
+persistence flags, so the next tick starts from a clean sweep. Incidents, runs,
+snapshots and credit accounting are preserved, and the reset is written to the
+audit log as `operator_reset` — never delete the volume to clear a quarantine.
+
+Check the cause is actually fixed *before* resetting, or the next sweep
+re-quarantines and spends another round of heal attempts:
+
+```bash
+brightdata scraper run <collector_id> <canary-url> --sync -o /tmp/v.json
+```
+
 ## Standing rules
 - Anything that waits on a heal goes background; never sit watching a spinner.
 - Fixture-first: UI and gate development never call the real backend.

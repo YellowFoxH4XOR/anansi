@@ -10,6 +10,7 @@
     "ui:build": "npm --prefix apps/console-ui run build",
     "ui:dev": "npm --prefix apps/console-ui run dev",
     "scheduler": "tsx apps/agent/main.ts",
+    "collector:reset": "tsx apps/agent/reset-collector.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

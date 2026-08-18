@@ -28,6 +28,26 @@ export type SenseOutput = {
 
 const ROUTE_PRECEDENCE: Route[] = ["infra", "dead", "config", "heal", "retry"];
 
+function hasSystemicOutputSchemaMismatch(contract: Contract, records: RunRecord[]): boolean {
+  if (records.length < 2) return false;
+  const required = Object.entries(contract.fields).filter(([, spec]) => spec.required);
+  const invalidEverywhere = required.filter(([name, spec]) =>
+    records.every((r) => {
+      const value = r.fields[name];
+      if (value == null) return true;
+      return spec.type === "string"
+        ? typeof value !== "string"
+        : !Number.isFinite(typeof value === "number" ? value : Number(value));
+    }),
+  );
+
+  // One broken field across the fleet is a legitimate DOM change (M1 renames
+  // only price) and belongs in heal. Two or more required fields absent or the
+  // wrong type on every canary is an output-schema/configuration mismatch:
+  // changing page selectors cannot repair it, so never spend heal attempts.
+  return invalidEverywhere.length >= 2;
+}
+
 export function evaluate(
   contract: Contract,
   records: RunRecord[],
@@ -115,9 +135,14 @@ export function evaluate(
     return { result: { kind: "healthy", warnings }, flags: nextFlags };
   }
 
+  const systemicSchemaMismatch = hasSystemicOutputSchemaMismatch(contract, ok);
   const route =
     ROUTE_PRECEDENCE.find((rt) => errorRoutes.has(rt)) ??
-    (violations.some((v) => v.signal !== "hard_fail") ? "heal" : "retry");
+    (systemicSchemaMismatch
+      ? "config"
+      : violations.some((v) => v.signal !== "hard_fail")
+        ? "heal"
+        : "retry");
 
   const incident: Incident = {
     kind: "incident",

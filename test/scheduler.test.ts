@@ -15,6 +15,7 @@ import { Store } from "../packages/adapters/store/index.js";
 import { TemplateLlm } from "../packages/adapters/llm/index.js";
 import { Scheduler } from "../apps/agent/scheduler.js";
 import { rawToRun } from "../apps/agent/incident.js";
+import { resetCollector } from "../apps/agent/reset-collector.js";
 import type { BrightDataAdapter, HealResponse, RawRow } from "../packages/adapters/brightdata/types.js";
 
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
@@ -90,6 +91,35 @@ describe("scheduler resilience", () => {
     // A leaked `running` entry would make every later tick a silent no-op.
     await sched.sweepOnce(sched["scrapers"][0]!);
     expect(bd.calls).toBeGreaterThan(afterFirst);
+  });
+});
+
+describe("operator recovery", () => {
+  it("unquarantines without deleting history and clears persistent sense flags", async () => {
+    await store.ensureCollector(contract.scraper);
+    await store.setCollectorState(contract.scraper, "quarantined");
+    await store.setFlags(contract.scraper, { fill_rate: ["price"], cusum: ["price|url"] });
+    await store.putIncident({ id: "kept", scraper: contract.scraper } as never);
+
+    const result = await resetCollector(store, contract.scraper, "production scraper saved");
+
+    expect(result).toEqual({ from: "quarantined", to: "healthy" });
+    expect(store.collectorState(contract.scraper)).toBe("healthy");
+    expect(store.flags(contract.scraper)).toEqual({ fill_rate: [], cusum: [] });
+    expect(store.incident("kept")).toBeDefined();
+    expect(store.auditLog()).toContainEqual(
+      expect.objectContaining({
+        event: "operator_reset",
+        scraper: contract.scraper,
+        from: "quarantined",
+        to: "healthy",
+        reason: "production scraper saved",
+      }),
+    );
+  });
+
+  it("refuses to reset an unknown collector", async () => {
+    await expect(resetCollector(store, "missing")).rejects.toThrow("unknown collector 'missing'");
   });
 });
 

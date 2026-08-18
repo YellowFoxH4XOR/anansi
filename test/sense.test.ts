@@ -86,6 +86,25 @@ describe("evaluate — the five signals", () => {
     expect(result.signals.some((s) => s.signal === "contract" && s.field === "price")).toBe(true);
   });
 
+  it("systemic output-schema mismatch routes to config, not heal", () => {
+    // Exact field shape returned by the generated production collector: two
+    // required contract fields are wrong on every canary. Healing page selectors
+    // cannot fix an output-schema mismatch, so spending heal attempts is wrong.
+    const records = healthySweep().map((r) => ({
+      ...r,
+      fields: {
+        product_title: r.fields.title,
+        price: { value: r.fields.price, currency: "USD", symbol: "$" },
+        availability: r.fields.availability,
+        input: { url: r.url },
+      },
+    }));
+    const { result } = evaluate(contract, records);
+    expect(result.kind).toBe("incident");
+    if (result.kind !== "incident") return;
+    expect(result.route).toBe("config");
+  });
+
   it("M2 (silent injection): plausible wrong price passes 1–3 and trips the golden band", () => {
     const records = healthySweep().map((r) =>
       r.url.includes("echo-speaker") ? { ...r, fields: { ...r.fields, price: 12.99 } } : r,
