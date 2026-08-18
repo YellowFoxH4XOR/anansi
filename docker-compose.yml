@@ -1,0 +1,82 @@
+# ANANSI on Coolify — one "Docker Compose" resource, two public URLs.
+#
+#   lab      → https://lab.<your-domain>       the storefront that gets broken
+#   console  → https://console.<your-domain>   the monitoring console
+#   agent    → no domain; the worker the console watches
+#
+# console and agent must live in ONE compose resource because they share the
+# anansi-data volume: the agent is the only writer, the console only reads.
+# Coolify turns the SERVICE_FQDN_* entries below into real domains + routing.
+# Full walkthrough: docs/deploy-coolify.md
+
+services:
+  # ── The patient ────────────────────────────────────────────────────────────
+  # Public because Bright Data's cloud scrapers have to reach it from the
+  # internet. /__control is the mutation panel — anyone with the URL can break
+  # the shop, which is the point of a demo lab; do not host anything real here.
+  lab:
+    build:
+      context: ./apps/ui
+    environment:
+      - SERVICE_FQDN_LAB_4600
+      - PORT=4600
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4600/__state').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── The console ────────────────────────────────────────────────────────────
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile.console
+    environment:
+      - SERVICE_FQDN_CONSOLE_4700
+      - PORT=4700
+      - ANANSI_DATA=/data
+      # Mirrors the agent's adapter so the masthead can label a rehearsal run.
+      - ANANSI_MODE=${ANANSI_ADAPTER:-live}
+    volumes:
+      - anansi-data:/data
+    depends_on:
+      - agent
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4700/api/state').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── The agent ──────────────────────────────────────────────────────────────
+  # No domain and no published port: it is a worker, reachable only inside the
+  # compose network. Everything it does shows up in the console.
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      args:
+        # Flip to "true" once you are running the real adapter (installs the
+        # brightdata CLI into the image).
+        WITH_BRIGHTDATA_CLI: ${WITH_BRIGHTDATA_CLI:-false}
+    environment:
+      - ANANSI_DATA=/data
+      # live = rehearsal (real fetches, simulated heals, no credits).
+      # Set ANANSI_ADAPTER=real in Coolify once the collector_id is filled in.
+      - ANANSI_ADAPTER=${ANANSI_ADAPTER:-live}
+      # Rehearsal reaches the Lab over the internal network — no public DNS, no
+      # egress. REAL mode must instead point at the Lab's PUBLIC url, because
+      # the scrape happens on Bright Data's machines, not this one.
+      - ANANSI_LAB_BASE=${ANANSI_LAB_BASE:-http://lab:4600}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - anansi-data:/data
+    depends_on:
+      - lab
+    restart: unless-stopped
+
+volumes:
+  anansi-data:

@@ -1,0 +1,15 @@
+.git
+.gitignore
+node_modules
+console-ui/node_modules
+console-ui/dist
+console-ui/tsconfig.tsbuildinfo
+lab/node_modules
+data
+coverage
+.env
+.env.*
+docs
+examples
+test
+*.md

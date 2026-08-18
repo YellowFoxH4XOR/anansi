@@ -1,0 +1,31 @@
+{
+  "name": "anansi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An immune system for your scraper fleet — closes Bright Data's scraper heal workflow into an autonomous sense → diagnose → heal → verify → promote loop.",
+  "type": "module",
+  "scripts": {
+    "lab": "tsx apps/ui/server.ts",
+    "console": "tsx apps/console/server.ts",
+    "ui:build": "npm --prefix apps/console-ui run build",
+    "ui:dev": "npm --prefix apps/console-ui run dev",
+    "scheduler": "tsx apps/agent/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "express": "^4.19.2",
+    "js-yaml": "^4.1.0",
+    "node-html-parser": "^6.1.13",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.5.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

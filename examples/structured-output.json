@@ -1,0 +1,68 @@
+{
+  "_comment": "Example structured output (Rule 9). Top: one canary sweep as collected by the hand-authored Scraper Studio scraper (scraper/lab-scraper.js) — note the collected input.url for row attribution and the _snapshot_html capture (truncated here) that powers the DOM-diff pipeline. Bottom: the immutable incident record ANANSI writes when a sweep fails and the loop closes.",
+  "scraper_output": [
+    {
+      "url": "https://anansi-lab.vercel.app/product/echo-speaker",
+      "title": "Echo Portable Speaker",
+      "price": 49.99,
+      "sale_price": null,
+      "availability": "in stock",
+      "_snapshot_html": "<!doctype html><html lang=\"en\"><head>…</head><body>…<div class=\"product\" data-sku=\"echo-speaker\">…<span class=\"price\">$49.99</span>…</div>…</body></html>"
+    },
+    {
+      "url": "https://anansi-lab.vercel.app/product/aurora-lamp",
+      "title": "Aurora Desk Lamp",
+      "price": 29.99,
+      "sale_price": 29.99,
+      "availability": "in stock",
+      "_snapshot_html": "…"
+    }
+  ],
+  "incident_record": {
+    "id": "4b6a6bff",
+    "scraper": "lab-storefront",
+    "opened_at": 1755419719000,
+    "closed_at": 1755419733000,
+    "route": "heal",
+    "signal": [
+      {
+        "signal": "golden_band",
+        "field": "price",
+        "url": "https://anansi-lab.vercel.app/product/echo-speaker",
+        "detail": "12.99 outside band 42.49–57.49 (pinned 49.99 ± 15%)"
+      }
+    ],
+    "prompt": "Field(s) price broke: 12.99 outside band 42.49–57.49 (pinned 49.99 ± 15%). New element(s) appeared: aside.crosssell (\"Customers also bought 📱 Clip-On Phone Case $12.99\"). The correct price (\"49.99\") now renders at div.price-block > span.price. Fix the scraper so price match the page's real values again; leave working fields untouched.",
+    "heal_attempts": [
+      {
+        "phase": "v1",
+        "verdict": {
+          "pass": true,
+          "confidence": 1,
+          "gates": [
+            { "gate": "preview_nonempty", "pass": true, "detail": "1 preview row(s)" },
+            { "gate": "contract_clean", "pass": true, "detail": "all preview rows satisfy the contract" },
+            { "gate": "invariants_hold", "pass": true, "detail": "all invariants hold" },
+            { "gate": "goldens_attributable", "pass": true, "detail": "goldens pass on 1 attributable row(s)" },
+            { "gate": "value_in_dom", "pass": true, "detail": "every healed value exists in the live DOM (not hardcoded)" }
+          ]
+        }
+      },
+      {
+        "phase": "v2",
+        "verdict": {
+          "pass": true,
+          "confidence": 1,
+          "gates": [
+            { "gate": "sweep_clean", "pass": true, "detail": "full sweep of 4 canaries is healthy (contract · goldens · invariants · CUSUM)" },
+            { "gate": "no_regression", "pass": true, "detail": "previously-healthy fields are still healthy" }
+          ]
+        }
+      }
+    ],
+    "resolution": "promoted",
+    "credits_spent": 4,
+    "wall_ms": 14000,
+    "approved_by": "gate"
+  }
+}
