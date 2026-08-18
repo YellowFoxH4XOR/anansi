@@ -33,6 +33,7 @@ brightdata scraper approve <collector_id> --url <canary>      # or --reject
 | Billing | 1 credit = 1 page load; free 5k/mo; PAYG $1.5/1k | see credit budget below |
 | Sync run cap | 25–50 s server-side | lazy-load canaries must go async |
 | Result retention | 7 d realtime / 16 d batch | our store is the system of record, never theirs |
+| **Output schema is a second layer** | renames fields, retypes them (`price` type + `raw` format → `{value,currency,symbol}`), and DROPS undeclared fields. Applied only on **Save to Production** | preview output ≠ production output; verify with `scraper run`, never the IDE preview alone |
 | Versions menu | dashboard rollback to earlier scraper version | manual rollback demo is legitimate |
 
 ## Credit budget (solo)
@@ -58,10 +59,9 @@ contact@wemakedevs.org.
 
 ## IDE functions we deliberately exercise (Web-Slinger surface table)
 
-`tag_html()` every canary (snapshot source — **VERIFIED on a live run: parser code reads a
-tag as `parser.<name>`, and Studio exports it as a `<name>` output field automatically
-(plus `<name>_url`), so the parser must NOT also return it under another name — the output
-schema drops the duplicate**; `input.url` is returned explicitly for row attribution) ·
+`tag_html()` every canary (snapshot source — **VERIFIED on live runs: parser code reads a
+tag as `parser.<name>` and must RETURN it, and the OUTPUT SCHEMA must declare the field or
+it is dropped silently**; `input.url` is returned explicitly for row attribution) ·
 `tag_response()` (S3 XHR heal, if it survives cuts) ·
 `next_stage()` (books list→detail) · `collect(validate_fn)` (contract pushed into the
 scraper) · `detect_block()` (triage semantics) · `close_popup()` (M3 heal target) ·

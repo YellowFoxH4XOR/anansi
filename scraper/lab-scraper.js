@@ -9,9 +9,10 @@
 //
 // Load-bearing requirements, from docs/brightdata-notes.md:
 //   1. tag_html() runs on EVERY page load (snapshot source for the diff
-//      pipeline). Scraper Studio surfaces the tag under its own name, so the
-//      run output carries `page_html` (plus an auto-added `page_html_url`)
-//      without the parser having to return it. Verified against a live run.
+//      pipeline). Parser code reads the tag as `parser.page_html`, and the
+//      parser must RETURN it so the field exists in the collected object.
+//      A returned field still only reaches production output if the OUTPUT
+//      SCHEMA declares it — the schema drops undeclared fields silently.
 //   2. input.url is returned on every row so heal preview rows are
 //      attributable to a canary (heal's --url is cosmetic; preview_result is
 //      backend-chosen sample rows).
@@ -21,9 +22,13 @@
 //      hard breakage fails loudly at the platform layer too. The callback
 //      THROWS on invalid data (it does not return an error string).
 //
-// Division of labour, per the functions reference: parse() and collect() are
-// INTERACTION functions. Parser code returns a record; interaction code
-// collects it. Do not call collect() from parser code.
+// ⚠ OUTPUT SCHEMA: parser output is NOT the production payload. The schema
+// renames, retypes and drops fields, and it is only applied on Save to
+// Production. The generated schema shipped `product_title` and a `price` typed
+// as price/raw, which is why production returned
+// {"value":49.99,"currency":"USD"} while preview looked correct. The schema
+// must declare exactly: url (text), title (text), price (NUMBER, not price),
+// sale_price (number), availability (text), page_html (text).
 
 // ─── Interaction code ────────────────────────────────────────────────────────
 
@@ -62,9 +67,9 @@ const firstText = (sel) => {
 return {
   // Attribution: heal preview rows are useless without it.
   url: input.url,
-  // NOTE: the DOM snapshot is NOT returned here. tag_html('page_html') above
-  // already puts `page_html` in the output; returning a second copy under
-  // another name only risks the output schema dropping it (it did).
+  // The DOM snapshot ANANSI diffs against. Returned explicitly so the output
+  // schema can declare it; without a matching schema field it is dropped.
+  page_html: parser.page_html,
   title: firstText('h1.title'),
   // Deliberately the naive selector: first .price on the page. M1 nulls it,
   // M2 makes it silently wrong ($12.99 cross-sell) — that's the demo.
