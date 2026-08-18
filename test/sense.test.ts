@@ -86,6 +86,21 @@ describe("evaluate — the five signals", () => {
     expect(result.signals.some((s) => s.signal === "contract" && s.field === "price")).toBe(true);
   });
 
+  it("a platform validation error does not masquerade as a schema mismatch", () => {
+    // When collect()'s validate_fn throws, Studio discards the record and
+    // returns only system fields. Every required field then looks absent, but
+    // the cause is a DOM change (M1 renamed .price), which belongs in heal.
+    const records = urls.map((url) => ({
+      url,
+      fields: { input: { url }, error: "Error: price missing" },
+      ts: 1,
+    }));
+    const { result } = evaluate(contract, records);
+    expect(result.kind).toBe("incident");
+    if (result.kind !== "incident") return;
+    expect(result.route).toBe("heal");
+  });
+
   it("systemic output-schema mismatch routes to config, not heal", () => {
     // Exact field shape returned by the generated production collector: two
     // required contract fields are wrong on every canary. Healing page selectors

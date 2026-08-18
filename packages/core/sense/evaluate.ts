@@ -28,8 +28,37 @@ export type SenseOutput = {
 
 const ROUTE_PRECEDENCE: Route[] = ["infra", "dead", "config", "heal", "retry"];
 
+// Fields Scraper Studio attaches to every row regardless of what the parser
+// collected. None of them is scraped data, so a row carrying only these
+// returned nothing at all.
+const SYSTEM_FIELDS = new Set([
+  "input",
+  "prime_input",
+  "error",
+  "error_code",
+  "warning",
+  "warning_code",
+  "status_code",
+  "timestamp",
+  "page_id",
+  "job_id",
+  "collector_id",
+]);
+
 function hasSystemicOutputSchemaMismatch(contract: Contract, records: RunRecord[]): boolean {
   if (records.length < 2) return false;
+
+  // A schema mismatch is a SUCCESSFUL scrape whose fields are shaped wrong, so
+  // every row still carries data. A row holding only system fields means the
+  // record was discarded (collect()'s validate_fn threw, for example), which
+  // hides the real fault: on M1 a renamed .price throws 'price missing' and the
+  // whole record vanishes, making all required fields look absent. Treating
+  // that as a config fault would send a genuine DOM change away from heal.
+  const everyRowReturnedData = records.every((r) =>
+    Object.keys(r.fields).some((k) => !SYSTEM_FIELDS.has(k) && r.fields[k] != null),
+  );
+  if (!everyRowReturnedData) return false;
+
   const required = Object.entries(contract.fields).filter(([, spec]) => spec.required);
   const invalidEverywhere = required.filter(([name, spec]) =>
     records.every((r) => {

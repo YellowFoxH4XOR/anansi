@@ -63,8 +63,11 @@ contact@wemakedevs.org.
 tag as `parser.<name>` and must RETURN it, and the OUTPUT SCHEMA must declare the field or
 it is dropped silently**; `input.url` is returned explicitly for row attribution) ·
 `tag_response()` (S3 XHR heal, if it survives cuts) ·
-`next_stage()` (books list→detail) · `collect(validate_fn)` (contract pushed into the
-scraper) · `detect_block()` (triage semantics) · `close_popup()` (M3 heal target) ·
+`next_stage()` (books list→detail) · `collect()` **without** a validate_fn — deliberately:
+a throwing validator makes Studio discard the whole record including the `tag_html` capture,
+so M1 arrives as an empty row and the heal loop has nothing to diff (observed as incident
+9708ba89); ANANSI's contract engine is the validity authority and must see the null ·
+`detect_block()` (triage semantics) · `close_popup()` (M3 heal target) ·
 `load_more()` (S4) · error taxonomy consumed end-to-end · Versions for rollback
 (dashboard-only — no CLI rollback; auto-detect, manual click).
 

@@ -18,9 +18,9 @@
 //      backend-chosen sample rows).
 //   3. dead_page semantics: navigate() throws dead_page on 404 by default —
 //      never heal, never spend.
-//   4. Contract-shaped validation is pushed into collect()'s validate_fn so
-//      hard breakage fails loudly at the platform layer too. The callback
-//      THROWS on invalid data (it does not return an error string).
+//   4. NO validate_fn on collect(). See the interaction code for why: a
+//      throwing validator makes Studio discard the whole record, snapshot
+//      included, which is fatal to the heal loop.
 //
 // ⚠ OUTPUT SCHEMA: parser output is NOT the production payload. The schema
 // renames, retypes and drops fields, and it is only applied on Save to
@@ -42,13 +42,19 @@ tag_html('page_html');
 // heal lane; the correct heal adds close_popup(), not a selector swap).
 wait('.price-block', { timeout: 15000 });
 
-// validate_fn throws on invalid data, so a null required field surfaces as a
-// platform-level parse failure rather than a quiet null row.
-collect(parse(), (row) => {
-  if (!row.title || row.title.length < 3) throw new Error('title missing');
-  if (row.price == null || row.price <= 0) throw new Error('price missing');
-  if (!row.availability) throw new Error('availability missing');
-});
+// Collected unconditionally, with NO validate_fn.
+//
+// A validate_fn that throws makes Scraper Studio discard the entire record and
+// emit only system fields — no title, no price, and critically no page_html.
+// On M1 (a renamed .price) that is precisely backwards: the one scenario the
+// heal loop exists for arrives as an empty row, so Diagnose has no DOM to diff
+// and the collector quarantines without ever attempting a heal. Observed live
+// as incident 9708ba89.
+//
+// ANANSI's contract engine (core/sense/contract.ts) is the authority on field
+// validity, and it needs to SEE the null to act on it. The scraper's job is to
+// report what the page showed, nulls included.
+collect(parse());
 
 // ─── Parser code ─────────────────────────────────────────────────────────────
 
