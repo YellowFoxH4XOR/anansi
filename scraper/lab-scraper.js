@@ -1,27 +1,35 @@
 // ANANSI Lab scraper — hand-authored for Bright Data Scraper Studio (Rule 5:
 // a custom Scraper Studio scraper is mandatory; library-only disqualifies).
 //
-// Paste the two sections into the Scraper Studio IDE (interaction code +
-// parser code). Verify the exact function signatures against the IDE's
-// functions reference during the hour-one smoke test — the load-bearing
-// requirements, from docs/brightdata-notes.md, are:
+// Paste the two sections below into the Scraper Studio IDE. Signatures verified
+// against docs.brightdata.com/datasets/scraper-studio/functions.
+//
+// ⚠ WORKER: this scraper needs the **Browser worker**. tag_html() and wait()
+// are both browser-only and throw on a Code worker.
+//
+// Load-bearing requirements, from docs/brightdata-notes.md:
 //   1. tag_html() runs on EVERY page load (snapshot source for the diff
-//      pipeline). Tagged values reach parser code only — the parser MUST
-//      explicitly collect() the snapshot into an output field, or ANANSI
-//      never sees it.
-//   2. input.url is collected on every row so heal preview rows are
+//      pipeline). The tagged value is NOT a bare `html` variable: parser code
+//      reads it as `parser.page_html`, and the parser must return it in a
+//      collected field or ANANSI never sees a snapshot.
+//   2. input.url is returned on every row so heal preview rows are
 //      attributable to a canary (heal's --url is cosmetic; preview_result is
 //      backend-chosen sample rows).
-//   3. dead_page semantics: a 404 marks the URL dead — never heal, never spend.
-//   4. Contract-shaped validation is pushed into collect() so hard breakage
-//      fails loudly at the platform layer too.
+//   3. dead_page semantics: navigate() throws dead_page on 404 by default —
+//      never heal, never spend.
+//   4. Contract-shaped validation is pushed into collect()'s validate_fn so
+//      hard breakage fails loudly at the platform layer too. The callback
+//      THROWS on invalid data (it does not return an error string).
+//
+// Division of labour, per the functions reference: parse() and collect() are
+// INTERACTION functions. Parser code returns a record; interaction code
+// collects it. Do not call collect() from parser code.
 
 // ─── Interaction code ────────────────────────────────────────────────────────
 
 navigate(input.url);
 
-// Snapshot the full DOM for ANANSI's diff pipeline. Tag on every run, before
-// any waits can fail — a broken page's snapshot is the evidence.
+// Snapshot the full DOM for ANANSI's diff pipeline, before any wait can throw.
 tag_html('page_html');
 
 // The price block is the scrape target; M3 (cookie wall) makes this wait time
@@ -29,45 +37,42 @@ tag_html('page_html');
 // heal lane; the correct heal adds close_popup(), not a selector swap).
 wait('.price-block', { timeout: 15000 });
 
-collect(parse());
+// validate_fn throws on invalid data, so a null required field surfaces as a
+// platform-level parse failure rather than a quiet null row.
+collect(parse(), (row) => {
+  if (!row.title || row.title.length < 3) throw new Error('title missing');
+  if (row.price == null || row.price <= 0) throw new Error('price missing');
+  if (!row.availability) throw new Error('availability missing');
+});
 
 // ─── Parser code ─────────────────────────────────────────────────────────────
 
-const priceText = (sel) => {
+const priceNumber = (sel) => {
   const el = $(sel).first();
   if (!el.length) return null;
-  const m = el.text().replace(/[^0-9.]/g, '');
-  return m ? parseFloat(m) : null;
+  const digits = el.text().replace(/[^0-9.]/g, '');
+  return digits ? parseFloat(digits) : null;
 };
 
-const first = (sel) => {
+const firstText = (sel) => {
   const el = $(sel).first();
   return el.length ? el.text().trim() : null;
 };
 
-const data = {
+return {
   // Attribution + snapshot: the two fields ANANSI cannot live without.
   url: input.url,
-  _snapshot_html: html, // the tag_html('page_html') capture
+  _snapshot_html: parser.page_html, // the tag_html('page_html') capture
 
-  title: first('h1.title'),
+  title: firstText('h1.title'),
   // Deliberately the naive selector: first .price on the page. M1 nulls it,
   // M2 makes it silently wrong ($12.99 cross-sell) — that's the demo.
-  price: priceText('.price'),
+  price: priceNumber('.price'),
   // .price is what the customer pays (and what every golden pins); .was is the
   // struck-through ORIGINAL. Collecting .was here would break the contract
   // invariant `sale_price <= price` on every discounted canary — the Lab's
   // aurora-lamp shows .price $29.99 over .was $34.50 — so a sale is described
   // by price alone until the contract gains a list_price field.
   sale_price: null,
-  availability: first('.availability'),
+  availability: firstText('.availability'),
 };
-
-// Contract-shaped validation at the platform layer: null required fields are
-// a parse failure, not a quiet null row.
-collect(data, (row) => {
-  if (!row.title || row.title.length < 3) return 'title missing';
-  if (row.price == null || row.price <= 0) return 'price missing';
-  if (!row.availability) return 'availability missing';
-  return true;
-});
