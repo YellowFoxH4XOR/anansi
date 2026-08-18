@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   const labBase = process.env.ANANSI_LAB_BASE;
 
   const contractsDir = process.env.ANANSI_CONTRACTS ?? "contracts";
-  const scrapers: ScheduledScraper[] = readdirSync(contractsDir)
+  const loaded = readdirSync(contractsDir)
     .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
     .map((f) => {
       const contract = parseContract(readFileSync(join(contractsDir, f), "utf8"));
@@ -42,18 +42,15 @@ async function main(): Promise<void> {
       const cadence = Number(process.env.ANANSI_CADENCE_MINUTES);
       if (Number.isFinite(cadence) && cadence > 0) contract.cadence_minutes = cadence;
 
-      // A missing collector_id is a configuration error, not a runtime state.
-      // In real mode every call would be `scraper run UNSET`, which the platform
-      // answers 404 forever, so say so once and clearly rather than rediscovering
-      // it on every tick.
-      if (!contract.collector_id) {
-        if (mode === "real") {
-          console.error(
-            `FATAL [${contract.scraper}]: adapter=real needs a collector_id. ` +
-              `Run 'brightdata scraper create', put the returned id in contracts/${f}, and redeploy.`,
-          );
-          process.exit(1);
-        }
+      // A missing collector_id is a static configuration error, not a runtime
+      // state: in real mode every call would be `scraper run UNSET`, which the
+      // platform answers 404 forever. Such a contract is still loaded, so the
+      // console lists its collector, but it is never swept.
+      const blocked =
+        mode === "real" && !contract.collector_id
+          ? `no collector_id — run 'brightdata scraper create', put the returned id in contracts/${f}, redeploy`
+          : undefined;
+      if (!contract.collector_id && mode !== "real") {
         console.warn(`[${contract.scraper}] no collector_id in contract — set it after 'brightdata scraper create'`);
       }
       // Rehearsal mode needs this contract's canary list to build heal preview
@@ -65,20 +62,43 @@ async function main(): Promise<void> {
             ? new LiveLabBrightData({ canaries: contract.canaries.map((c) => c.url) })
             : new RealBrightData();
 
-      return {
+      const scraper: ScheduledScraper = {
         contract,
         deps: { bd, llm, store, collectorId: contract.collector_id ?? "UNSET" },
       };
+      return { scraper, blocked };
     });
 
   // Show the fleet in the console from the first tick, not from the first fault.
-  for (const s of scrapers) await store.ensureCollector(s.contract.scraper);
+  // Blocked contracts are registered too, so a misconfigured collector appears
+  // in the console rather than silently missing from the fleet.
+  for (const l of loaded) await store.ensureCollector(l.scraper.contract.scraper);
 
-  console.log(`ANANSI scheduler: ${scrapers.length} contract(s), adapter=${mode}`);
+  for (const l of loaded) {
+    if (l.blocked) console.error(`[${l.scraper.contract.scraper}] NOT SCHEDULED: ${l.blocked}`);
+  }
+
+  const runnable = loaded.filter((l) => !l.blocked).map((l) => l.scraper);
+  console.log(`ANANSI scheduler: ${runnable.length}/${loaded.length} contract(s) schedulable, adapter=${mode}`);
   if (mode === "live") {
     console.log("rehearsal mode — real fetches of the Lab, SIMULATED heals, no Bright Data calls");
   }
-  new Scheduler(scrapers).start();
+
+  if (runnable.length === 0) {
+    // Exiting here is worse than useless: restart: unless-stopped would loop the
+    // container forever over a static config error, burying the one line that
+    // explains it. Idle instead — the container stays up, the console keeps
+    // serving from the shared volume, and the operator sees a periodic reminder.
+    // The timer is also what keeps the event loop alive; with no scheduler
+    // intervals Node would otherwise exit 0 and restart just the same.
+    setInterval(
+      () => console.error(`idle: no schedulable contracts (adapter=${mode}) — fix the config above and redeploy`),
+      5 * 60_000,
+    );
+    return;
+  }
+
+  new Scheduler(runnable).start();
 }
 
 main().catch((e) => {
