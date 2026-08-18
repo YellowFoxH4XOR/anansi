@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/* ANANSI console identity — dark ink terminal, heal-orange accent.
+   Status colors are reserved (good/warn/bad) and always ship with a glyph or
+   word — never color alone (accent vs bad are hue-near by design constraint;
+   validated: CVD ΔE 9.5 dark / 9.2 light with secondary encoding). */
+:root {
+  --bg: #10131a;
+  --panel: #1a1f2a;
+  --panel-2: #151a24;
+  --line: #2a3242;
+  --ink: #e6e9f0;
+  --muted: #8b94a7;
+  --accent: #e0663f;
+  --accent-soft: rgba(224, 102, 63, 0.14);
+  --good: #4caf7d;
+  --good-soft: rgba(76, 175, 125, 0.13);
+  --bad: #cc3344;
+  --bad-soft: rgba(204, 51, 68, 0.14);
+  --warn: #d9a53f;
+  /* single-series line hue — validated (dataviz six checks) vs --panel #1a1f2a:
+     L 0.63 in-band, C 0.11, contrast 4.6:1 */
+  --chart: #5598d6;
+  --code-bg: #0c0f15;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f4ee;
+    --panel: #ffffff;
+    --panel-2: #efece3;
+    --line: #ddd6c8;
+    --ink: #232a36;
+    --muted: #6d7482;
+    --accent: #c2492f;
+    --accent-soft: rgba(194, 73, 47, 0.1);
+    --good: #2e7d55;
+    --good-soft: rgba(46, 125, 85, 0.1);
+    --bad: #a82238;
+    --bad-soft: rgba(168, 34, 56, 0.09);
+    --warn: #9c7420;
+    --chart: #3a6ea8;
+    --code-bg: #f0ede3;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", monospace;
+  font-size: 14px;
+}
+
+.num { font-variant-numeric: tabular-nums; }
+
+.pulse { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+
+.fade-in { animation: fadeIn 0.25s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .fade-in { animation: none; } }
+
+pre { white-space: pre-wrap; word-break: break-word; }
+.diff-pre { white-space: pre; word-break: normal; }
+
+/* Focus ring — accent, on every interactive element. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { cursor: pointer; }
+
+/* Hover affordances — flat terminal identity: color/underline shifts only,
+   no shadows, no movement. */
+.btn-outline { transition: background-color 150ms ease; }
+.btn-outline:hover { background-color: var(--accent-soft); }
+.btn-neutral { background-color: var(--panel-2); transition: background-color 150ms ease; }
+.btn-neutral:hover { background-color: var(--accent-soft); }
+.link-dotted { text-decoration-line: underline; text-decoration-style: dotted; text-underline-offset: 4px; }
+.link-dotted:hover { text-decoration-style: solid; }
+.link-muted { color: var(--muted); transition: color 150ms ease; }
+.link-muted:hover { color: var(--accent); }
+.brand-link { transition: opacity 150ms ease; }
+.brand-link:hover { opacity: 0.82; }
+
+/* Masthead alarm: accent underline + soft glow when any collector is unwell. */
+.masthead { transition: border-color 150ms ease, box-shadow 150ms ease; }
+.masthead-alert {
+  border-color: var(--accent) !important;
+  box-shadow: 0 8px 22px -14px var(--accent);
+}
+
+/* Skeleton loader — shimmering muted bars; static under reduced motion. */
+.skeleton-bar {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(100deg, var(--panel) 35%, var(--line) 50%, var(--panel) 65%);
+  background-size: 220% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+@keyframes shimmer { from { background-position: 130% 0; } to { background-position: -90% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-bar { animation: none; background: var(--panel); }
+}
