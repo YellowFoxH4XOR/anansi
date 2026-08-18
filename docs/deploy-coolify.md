@@ -49,7 +49,7 @@ mode against the internal Lab.
 | `ANANSI_LAB_BASE` | `http://lab:4600` | Origin the canary URLs are rewritten to. Internal DNS is fine for rehearsal; **real mode needs the public Lab URL** (see below) |
 | `ANANSI_CADENCE_MINUTES` | contract value (30) | Sweep interval. Set `1`–`2` for a live demo so a fired mutation shows up in the console within a minute |
 | `WITH_BRIGHTDATA_CLI` | `false` | Build arg — installs the `brightdata` CLI into the agent image. Flip to `true` for real mode |
-| `ANTHROPIC_API_KEY` | *(unset)* | Optional. Claude writes the heal prompt; without it the deterministic template renderer is used |
+| `GEMINI_API_KEY` | *(unset)* | Optional. Gemini writes the heal prompt; without it the deterministic template renderer is used |
 
 ## 4 · Deploy, then break something
 

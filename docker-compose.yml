@@ -71,7 +71,13 @@ services:
       # egress. REAL mode must instead point at the Lab's PUBLIC url, because
       # the scrape happens on Bright Data's machines, not this one.
       - ANANSI_LAB_BASE=${ANANSI_LAB_BASE:-http://lab:4600}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Non-interactive CLI auth. Without this the real adapter needs an
+      # interactive `brightdata login` inside the container, whose credentials
+      # live in ~/.config/brightdata-cli and are wiped by every redeploy.
+      - BRIGHTDATA_API_KEY=${BRIGHTDATA_API_KEY:-}
+      # Sweep interval. Contract default is 30 min; set 1-2 for a live demo.
+      - ANANSI_CADENCE_MINUTES=${ANANSI_CADENCE_MINUTES:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     volumes:
       - anansi-data:/data
     depends_on:
