@@ -58,6 +58,23 @@ only with hours to spare.
 > Calendar check (verified): Aug 17, 2026 is a Monday, so the window is Mon 17 → Sun 23 —
 > a clean 7 days, no shifting needed. Still confirm the exact start/end *times* on Discord.
 
+## Clearing the console completely
+
+To start a demo from nothing — no incidents, no runs, no credit history:
+
+```bash
+# in the agent container
+npm run store:clear -- --yes
+```
+
+It refuses without `--yes`, because the volume is the system of record and
+Bright Data retains results only 7–16 days: once this is gone it is gone.
+Banked heal fixtures under `fixtures/` are harness output rather than runtime
+data and survive unless you add `--include-fixtures`.
+
+Restart the agent afterwards so it re-registers the fleet; otherwise the console
+shows no collectors until the next cadence tick, which reads as a dead agent.
+
 ## Recovering a quarantined collector
 
 Quarantine is deliberate and sticky: `sweepOnce` skips any collector that is not

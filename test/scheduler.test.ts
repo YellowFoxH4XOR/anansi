@@ -7,7 +7,7 @@
 // loop. Any transient 429 or network blip would have done the same in prod.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseContract } from "../packages/core/sense/contract.js";
@@ -16,6 +16,7 @@ import { TemplateLlm } from "../packages/adapters/llm/index.js";
 import { Scheduler } from "../apps/agent/scheduler.js";
 import { rawToRun } from "../apps/agent/incident.js";
 import { resetCollector } from "../apps/agent/reset-collector.js";
+import { clearStore } from "../apps/agent/clear-store.js";
 import type { BrightDataAdapter, HealResponse, RawRow } from "../packages/adapters/brightdata/types.js";
 
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
@@ -148,5 +149,39 @@ describe("platform row normalisation", () => {
     const run = await rawToRun({ url: "u", title: "t", _snapshot_html: "<html>x</html>" }, store, 1);
     expect(run.snapshot_ref).toBeDefined();
     expect(Object.keys(run.fields)).toEqual(["title"]);
+  });
+});
+
+describe("store clear", () => {
+  it("removes runtime data but preserves banked fixtures by default", async () => {
+    await store.ensureCollector(contract.scraper);
+    await store.setCollectorState(contract.scraper, "quarantined");
+    await store.addCredits(20);
+    await store.appendRun({ url: "u", fields: {}, ts: 1, scraper: contract.scraper });
+    await store.putIncident({ id: "old", scraper: contract.scraper } as never);
+    await store.saveSnapshot("<html>snap</html>");
+    writeFileSync(join(store.dir, "fixtures", "heal-m1.json"), "{}");
+
+    const { removed } = await clearStore(store.dir);
+
+    expect(removed.join(" ")).toContain("state.json");
+    expect(removed.join(" ")).toContain("snapshots/");
+    // A fresh Store, because the old one caches state keyed on mtime.
+    const after = new Store(store.dir);
+    expect(after.incidents()).toEqual([]);
+    expect(after.runs(contract.scraper)).toEqual([]);
+    expect(after.auditLog()).toEqual([]);
+    expect(after.creditsSpent()).toBe(0);
+    expect(after.collectors()).toEqual({});
+    // Banked heal fixtures are dev assets from the harness, not runtime data.
+    expect(existsSync(join(store.dir, "fixtures", "heal-m1.json"))).toBe(true);
+    // Directory layout must survive so the agent can write without a restart.
+    expect(existsSync(join(store.dir, "snapshots"))).toBe(true);
+  });
+
+  it("removes fixtures only when explicitly asked", async () => {
+    writeFileSync(join(store.dir, "fixtures", "heal-m1.json"), "{}");
+    await clearStore(store.dir, { includeFixtures: true });
+    expect(existsSync(join(store.dir, "fixtures", "heal-m1.json"))).toBe(false);
   });
 });
