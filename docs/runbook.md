@@ -103,3 +103,24 @@ brightdata scraper run <collector_id> <canary-url> --sync -o /tmp/v.json
 - Fixture-first: UI and gate development never call the real backend.
 - Commit small with conventional messages; the history is a judged artifact.
 - 30 minutes of README/ADR prose daily D2–D5 beats a D6 documentation panic.
+
+## A collector is quarantined and nothing is happening
+
+Quarantine is a full stop. A quarantined collector is not dispatchable, so every
+job the monitor sees for it is **deferred rather than handled**, and nothing
+clears that on its own — the point is that a human decides when it has had
+attention.
+
+```bash
+npm run collector:release                    # list what is held, change nothing
+npm run collector:release -- lab-storefront  # release one
+```
+
+Deferred jobs are not lost: they carry their payload in the ledger and are
+re-offered on the next poll. The ledger still guarantees each is acted on at
+most once.
+
+**Do not use `store:clear` for this.** It deletes `snapshots/` along with
+everything else, which throws away the archived last-good pages Diagnose needs —
+so recovering from a quarantine that way costs you the ability to diagnose the
+next failure, until another clean run has been archived.
