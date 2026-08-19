@@ -194,3 +194,25 @@ describe("evaluate — the five signals", () => {
     expect(result.route).toBe("retry");
   });
 });
+
+describe("contracts are optional per collector", () => {
+  it("parses a contract that pins no canaries", () => {
+    // A discovered scraper may declare field types without anyone pinning
+    // golden anchors. Rejecting that used to mean no monitoring at all.
+    const c = parseContract("scraper: bare\nfields:\n  title: { type: string, required: true }\n");
+    expect(c.canaries).toEqual([]);
+    expect(c.fill_rate_min).toBe(0.9);
+  });
+
+  it("evaluates a canary-less contract against collected rows", () => {
+    const c = parseContract("scraper: bare\nfields:\n  price: { type: number, required: true }\n");
+    const bad = evaluate(c, [{ url: "u", fields: { price: "not a number" }, ts: 1 }]);
+    expect(bad.result.kind).toBe("incident");
+    const good = evaluate(c, [{ url: "u", fields: { price: 4 }, ts: 1 }]);
+    expect(good.result.kind).toBe("healthy");
+  });
+
+  it("still refuses a contract with no fields at all", () => {
+    expect(() => parseContract("scraper: bare\n")).toThrow(/scraper\/fields/);
+  });
+});

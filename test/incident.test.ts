@@ -13,7 +13,6 @@ import { Store } from "../packages/adapters/store/index.js";
 import { driveIncident } from "../apps/agent/incident.js";
 import { productPage, PRODUCTS } from "../apps/ui/pages.js";
 import type { Incident, RunRecord } from "../packages/core/types.js";
-import type { RawRow } from "../packages/adapters/brightdata/types.js";
 
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
@@ -23,23 +22,6 @@ const injectedHtml = productPage(echo, "inject");
 
 const goodFields = { title: "Echo Portable Speaker", price: 49.99, sale_price: null, availability: "in stock" };
 
-function healedRawRows(): Record<string, RawRow[]> {
-  const out: Record<string, RawRow[]> = {};
-  for (const c of contract.canaries) {
-    out[c.url] = [
-      {
-        url: c.url,
-        _snapshot_html: baselineHtml,
-        title: (c.goldens.title as { value: string }).value,
-        price: (c.goldens.price as { value: number }).value,
-        sale_price: null,
-        availability: "in stock",
-      },
-    ];
-  }
-  return out;
-}
-
 let store: Store;
 
 beforeEach(async () => {
@@ -47,8 +29,8 @@ beforeEach(async () => {
   await store.init();
 });
 
-async function seedHealthyBaseline(): Promise<RunRecord[]> {
-  const sweep: RunRecord[] = [];
+/** The archive's last-good captures, which are what driveIncident diffs against. */
+async function seedHealthyBaseline(): Promise<void> {
   for (const c of contract.canaries) {
     const snapshot_ref = await store.saveSnapshot(baselineHtml);
     const run: RunRecord = {
@@ -63,9 +45,7 @@ async function seedHealthyBaseline(): Promise<RunRecord[]> {
       ts: 1,
     };
     await store.appendRun({ ...run, scraper: contract.scraper, healthy: true });
-    sweep.push(run);
   }
-  return sweep;
 }
 
 async function m2Incident(): Promise<Incident> {
@@ -91,10 +71,9 @@ async function m2Incident(): Promise<Incident> {
 
 describe("driveIncident — M2 silent injection, full loop", () => {
   it("diagnoses, heals, verifies, promotes; audit trail complete", async () => {
-    const baseline = await seedHealthyBaseline();
+    await seedHealthyBaseline();
     const incident = await m2Incident();
     const bd = new FakeBrightData({
-      runs: healedRawRows(),
       heals: [
         {
           status: "awaiting_approval",
@@ -104,7 +83,7 @@ describe("driveIncident — M2 silent injection, full loop", () => {
       ],
     });
 
-    const rec = await driveIncident(incident, contract, baseline, {
+    const rec = await driveIncident(incident, contract, {
       bd,
       llm: new TemplateLlm(),
       store,
@@ -115,16 +94,21 @@ describe("driveIncident — M2 silent injection, full loop", () => {
     expect(rec.approved_by).toBe("gate");
     expect(rec.prompt).toBeTruthy();
     expect(rec.prompt!.length).toBeLessThanOrEqual(1000);
-    expect(rec.heal_attempts.map((a) => a.phase)).toEqual(["v1", "v2"]);
-    expect(rec.credits_spent).toBe(contract.canaries.length); // the V2 sweep
+    expect(rec.heal_attempts).toHaveLength(1); // one gate, not two
+    // Heal attempts are the only spend ANANSI still initiates: it triggers no
+    // collection, so it consumes no page loads.
+    expect(rec.credits_spent).toBe(1);
 
+    // The whole platform interaction, in order. Nothing here starts a run.
     const ops = bd.calls.map((c) => c.op);
-    expect(ops).toEqual(["heal", "approve", "runSync", "runSync", "runSync", "runSync"]);
+    expect(ops).toEqual(["heal", "approve"]);
     expect(ops).not.toContain("reject");
 
+    // watching = approved, awaiting Bright Data's own next scheduled run as
+    // the regression check.
     expect(store.collectorState(contract.scraper)).toBe("watching");
     const events = store.auditLog().map((e) => e.event);
-    for (const expected of ["incident_open", "heal_start", "verify_v1", "approved", "verify_v2", "incident_closed"]) {
+    for (const expected of ["incident_open", "heal_start", "verify_v1", "approved", "incident_closed"]) {
       expect(events).toContain(expected);
     }
   });
@@ -132,16 +116,16 @@ describe("driveIncident — M2 silent injection, full loop", () => {
 
 describe("driveIncident — failed heals", () => {
   it("rejects the pending fix before each re-heal and quarantines after two strikes", async () => {
-    const baseline = await seedHealthyBaseline();
+    await seedHealthyBaseline();
     const incident = await m2Incident();
     const badHeal = {
       status: "awaiting_approval",
       diff_summary: "still wrong",
       preview_result: [{ url: echoUrl, ...goodFields, price: 12.99 }],
     };
-    const bd = new FakeBrightData({ runs: healedRawRows(), heals: [badHeal, badHeal] });
+    const bd = new FakeBrightData({ heals: [badHeal, badHeal] });
 
-    const rec = await driveIncident(incident, contract, baseline, {
+    const rec = await driveIncident(incident, contract, {
       bd,
       llm: new TemplateLlm(),
       store,
@@ -156,40 +140,17 @@ describe("driveIncident — failed heals", () => {
     expect(secondPrompt).toContain("different approach");
   });
 
-  it("V2 regression after approve quarantines and reports rollback (dashboard-only)", async () => {
-    const baseline = await seedHealthyBaseline();
-    const incident = await m2Incident();
-    // Preview looks perfect, but the promoted version breaks another canary.
-    const runs = healedRawRows();
-    runs[contract.canaries[1]!.url] = [
-      { url: contract.canaries[1]!.url, _snapshot_html: baselineHtml, title: "Aurora Desk Lamp", price: null, sale_price: null, availability: "in stock" },
-    ];
-    const bd = new FakeBrightData({
-      runs,
-      heals: [{ status: "awaiting_approval", diff_summary: "ok", preview_result: [{ url: echoUrl, ...goodFields }] }],
-    });
-
-    const rec = await driveIncident(incident, contract, baseline, {
-      bd,
-      llm: new TemplateLlm(),
-      store,
-      collectorId: "c_test",
-    });
-
-    expect(rec.resolution).toBe("rolled_back");
-    expect(store.collectorState(contract.scraper)).toBe("quarantined");
-  });
 });
 
 describe("driveIncident — non-heal lanes", () => {
   it("blocked is never healed (ADR-003): no adapter calls, infra resolution", async () => {
-    const baseline = await seedHealthyBaseline();
+    await seedHealthyBaseline();
     const records = contract.canaries.map((c) => ({ url: c.url, fields: {}, error_code: "blocked", ts: 2 }));
     const { result } = evaluate(contract, records);
     if (result.kind !== "incident") throw new Error("expected incident");
     const bd = new FakeBrightData();
 
-    const rec = await driveIncident(result, contract, baseline, {
+    const rec = await driveIncident(result, contract, {
       bd,
       llm: new TemplateLlm(),
       store,

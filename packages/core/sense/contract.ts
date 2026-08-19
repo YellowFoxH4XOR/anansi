@@ -2,14 +2,18 @@ import { load } from "js-yaml";
 import type { Contract, FieldSpec, Violation } from "../types.js";
 
 // Pure parse from YAML text; file I/O stays at the edges.
+//
+// Canaries are optional. A contract that pins no golden anchors still declares
+// field types and invariants, and rejecting it would mean a collector the
+// operator deliberately under-specified gets no monitoring at all.
 export function parseContract(yamlText: string): Contract {
   const raw = load(yamlText) as Contract;
-  if (!raw?.scraper || !raw.fields || !raw.canaries?.length) {
-    throw new Error("contract missing scraper/fields/canaries");
+  if (!raw?.scraper || !raw.fields) {
+    throw new Error("contract missing scraper/fields");
   }
+  raw.canaries ??= [];
   raw.invariants ??= [];
   raw.fill_rate_min ??= 0.9;
-  raw.cadence_minutes ??= 30;
   return raw;
 }
 

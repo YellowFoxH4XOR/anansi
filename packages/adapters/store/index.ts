@@ -7,23 +7,59 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { CollectorState, FieldHistory, IncidentRecord, RunRecord } from "../../core/types.js";
+import type { JobOutcome } from "../../core/sense/job-health.js";
+import type { Job } from "../brightdata/api.js";
 import type { PriorFlags } from "../../core/sense/evaluate.js";
 
 export type StoredRun = RunRecord & { scraper: string; lab_state?: string; healthy?: boolean; sweep_ts?: number };
 
-/** One cadence tick, reconstructed from the rows it wrote. */
-export type SweepSummary = {
-  sweep_ts: number; // when the sweep started
-  finished_ts: number; // last row it wrote
-  healthy: boolean;
-  canaries: number;
-  errors: number;
+/** A platform job's lifecycle inside ANANSI. `claimed` is written BEFORE any
+ *  dispatch: a crash mid-heal must not replay on restart, because a replay
+ *  could re-spend an AI generation or approve a fix nobody gated. */
+export type JobLedgerState = "claimed" | "handled" | "deferred";
+
+export type JobLedgerEntry = {
+  job_id: string;
+  collector: string;
+  /** Finish time when known, else discovery time — used only for pruning. */
+  ts: number;
+  state: JobLedgerState;
+  outcome?: JobOutcome | "seeded" | "abandoned";
+  incident_id?: string;
+  defer_reason?: string;
+  /** The job payload rides along on a deferral so a job discovered during a
+   *  heal can be re-swept later, even once it has aged out of the poll window.
+   *  A dropped tick used to be harmless; a dropped job is a lost fact. */
+  job?: Job;
+};
+
+/** Per-collector poll bookkeeping. Not correctness-bearing — the ledger is.
+ *  This only narrows the query window and carries the two-strike counters. */
+export type MonitorCursor = {
+  last_polled_ms: number;
+  last_job_finish_ms?: number;
+  /** Consecutive failures with no error_code to explain them. */
+  unexplained_failures: number;
+  /** Recent job start times, newest last — feeds inferSchedule(). */
+  start_times_ms: number[];
+  /** Recent row counts, newest last — feeds rowVolumeSignals(). */
+  line_counts: number[];
+  seeded: boolean;
+};
+
+export const NEW_CURSOR: MonitorCursor = {
+  last_polled_ms: 0,
+  unexplained_failures: 0,
+  start_times_ms: [],
+  line_counts: [],
+  seeded: false,
 };
 
 type StateFile = {
   collectors: Record<string, CollectorState>;
   flags: Record<string, PriorFlags>;
   creditsSpent: number;
+  monitor?: Record<string, MonitorCursor>;
 };
 
 export class Store {
@@ -54,40 +90,6 @@ export class Store {
 
   runs(scraper: string): StoredRun[] {
     return this.readLines<StoredRun>("runs.jsonl").filter((r) => r.scraper === scraper);
-  }
-
-  /** Recent sweeps, newest last. A healthy fleet writes nothing else, so this is
-   *  the only evidence the agent is alive and working. Rows are grouped by the
-   *  sweep_ts the scheduler stamps them with; rows written before that existed
-   *  fall back to proximity, which is why the gap is generous. */
-  sweeps(scraper: string, limit = 50): SweepSummary[] {
-    const LEGACY_GAP_MS = 3 * 60_000;
-    const groups: StoredRun[][] = [];
-    for (const r of this.runs(scraper)) {
-      const prev = groups[groups.length - 1];
-      const last = prev?.[prev.length - 1];
-      const sameSweep =
-        prev &&
-        last &&
-        (r.sweep_ts != null && last.sweep_ts != null
-          ? r.sweep_ts === last.sweep_ts
-          : r.ts - last.ts <= LEGACY_GAP_MS);
-      if (sameSweep) prev.push(r);
-      else groups.push([r]);
-    }
-
-    return groups.slice(-limit).map((rows) => {
-      const first = rows[0]!;
-      const last = rows[rows.length - 1]!;
-      return {
-        sweep_ts: first.sweep_ts ?? first.ts,
-        finished_ts: last.ts,
-        // appendRun stamps every row of a sweep with that sweep's verdict.
-        healthy: rows.every((r) => r.healthy === true),
-        canaries: rows.length,
-        errors: rows.filter((r) => r.error_code).length,
-      };
-    });
   }
 
   // Numeric history per field per URL for CUSUM, oldest first. labStateFilter lets
@@ -218,8 +220,75 @@ export class Store {
     return this.state().creditsSpent;
   }
 
+  /** ANANSI causes no page loads, so this counts heal attempts — the only spend
+   *  it can still initiate. */
   async addCredits(n: number): Promise<void> {
     this.state().creditsSpent += n;
     await this.persistState();
+  }
+
+  // --- job ledger (append-only jsonl, last write wins) --------------------
+  jobLedger(collector?: string): JobLedgerEntry[] {
+    const byId = new Map<string, JobLedgerEntry>();
+    for (const e of this.readLines<JobLedgerEntry>("jobs.jsonl")) byId.set(e.job_id, e);
+    const all = [...byId.values()];
+    return collector ? all.filter((e) => e.collector === collector) : all;
+  }
+
+  jobLedgerState(jobId: string): JobLedgerState | undefined {
+    return this.jobLedger().find((e) => e.job_id === jobId)?.state;
+  }
+
+  private async putLedger(entry: JobLedgerEntry): Promise<void> {
+    await appendFile(this.file("jobs.jsonl"), `${JSON.stringify(entry)}\n`);
+  }
+
+  async claimJob(jobId: string, collector: string, ts: number): Promise<void> {
+    await this.putLedger({ job_id: jobId, collector, ts, state: "claimed" });
+  }
+
+  async settleJob(jobId: string, outcome: JobLedgerEntry["outcome"], incidentId?: string): Promise<void> {
+    const prev = this.jobLedger().find((e) => e.job_id === jobId);
+    await this.putLedger({
+      job_id: jobId,
+      collector: prev?.collector ?? "",
+      ts: prev?.ts ?? Date.now(),
+      state: "handled",
+      outcome,
+      ...(incidentId ? { incident_id: incidentId } : {}),
+    });
+  }
+
+  async deferJob(jobId: string, collector: string, ts: number, reason: string, job?: Job): Promise<void> {
+    await this.putLedger({ job_id: jobId, collector, ts, state: "deferred", defer_reason: reason, ...(job ? { job } : {}) });
+  }
+
+  deferredJobs(collector: string): JobLedgerEntry[] {
+    return this.jobLedger(collector).filter((e) => e.state === "deferred");
+  }
+
+  /** Entries older than the platform's own retention can never be re-offered,
+   *  so dropping them bounds the ledger without an arbitrary cap. */
+  async pruneJobLedger(beforeMs: number): Promise<void> {
+    const kept = this.jobLedger().filter((e) => e.ts >= beforeMs);
+    await writeFile(this.file("jobs.jsonl"), kept.map((e) => `${JSON.stringify(e)}\n`).join(""));
+  }
+
+  // --- monitor cursor -----------------------------------------------------
+  monitorCursor(collector: string): MonitorCursor {
+    return this.state().monitor?.[collector] ?? { ...NEW_CURSOR };
+  }
+
+  async setMonitorCursor(collector: string, c: MonitorCursor): Promise<void> {
+    (this.state().monitor ??= {})[collector] = c;
+    await this.persistState();
+  }
+
+  /** Heal attempts in a rolling window, read from the audit log rather than a
+   *  counter, so a restart cannot reset a collector's daily budget. */
+  healAttemptsSince(collector: string, sinceMs: number): number {
+    return this.auditLog().filter(
+      (e) => e.event === "heal_start" && e.scraper === collector && typeof e.ts === "number" && e.ts >= sinceMs,
+    ).length;
   }
 }

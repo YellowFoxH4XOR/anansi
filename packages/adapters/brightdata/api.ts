@@ -22,8 +22,11 @@ export type Collector = {
 
 /** One run, from GET /dca/collector/jobs. */
 export type Job = {
-  id: string;
-  status: string; // building | running | done | failed | cancelled
+  id: string; // `j_` for batch runs, `vj_` for CLI/realtime ones
+  /** Optional on purpose. A live job was observed reporting no status at all
+   *  while carrying failed_pages=15, so a `status === "failed"` check is not a
+   *  failure detector. See core/sense/job-health.ts for the real predicate. */
+  status?: string; // building | running | done | failed | cancelled
   queued?: string;
   started?: string;
   finished?: string;
@@ -40,7 +43,7 @@ export type Job = {
 /** Job metadata, from GET /dca/log/{job_id}. */
 export type JobLog = {
   id: string;
-  status: string;
+  status?: string;
   collector?: string;
   inputs?: number;
   lines?: number;

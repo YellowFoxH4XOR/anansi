@@ -1,50 +1,69 @@
-// Drives one incident through Diagnose → Heal → Verify(V1) → Promote → Verify(V2).
+// Drives one incident through Diagnose → Heal → Verify(V1) → Promote.
 // All decision logic lives in core/; this file sequences adapters and writes the
 // audit trail. Key disciplines (architecture.md):
 // - V1 fail → reject the pending fix BEFORE any re-heal (a dangling
 //   awaiting_approval fix could be promoted by a stray manual approve).
 // - Two failed heals → reject + quarantine + page human, stop spending.
-// - V2 fail → rollback is dashboard-only (Versions menu): auto-detect, human clicks.
+//
+// There is no post-approval verification pass here any more. Bright Data's next
+// scheduled run IS the verification: the monitor sees it, and a promoted fix
+// that breaks the next real run quarantines the collector without a second heal.
+// That is stronger evidence than a synthetic canary sweep ever produced, and it
+// costs nothing — which is the whole reason the sweep could be deleted.
 
 import { randomUUID } from "node:crypto";
 import type { Contract, Incident, IncidentRecord, RunRecord } from "../../packages/core/types.js";
 import { buildEvidence, type EvidencePack } from "../../packages/core/diagnose/evidence.js";
 import { verifyV1, type PreviewRow } from "../../packages/core/verify/v1.js";
-import { verifyV2 } from "../../packages/core/verify/v2.js";
 import { previewRows, splitRow, type BrightDataAdapter, type RawRow } from "../../packages/adapters/brightdata/types.js";
 import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
-import { Store, type StoredRun } from "../../packages/adapters/store/index.js";
+import { Store } from "../../packages/adapters/store/index.js";
 
 const MAX_HEAL_ATTEMPTS = 2;
 
+/** Page loads are Bright Data's spend now, not ours; the balance still matters
+ *  because a heal performs a run on the platform's dime. */
+const BUDGET_FLOOR = 2_000;
+
+/** A collector whose target is permanently broken must not heal on every
+ *  scheduled run forever. Rolling 24h, reconstructed from the audit log. */
+const HEALS_PER_COLLECTOR_PER_DAY = 3;
+const DAY_MS = 24 * 60 * 60_000;
+
+/** The heal seam. Excluding any run/trigger method from the type is what makes
+ *  "ANANSI never starts a collection" a compile error rather than a promise. */
+export type HealAdapter = Pick<BrightDataAdapter, "heal" | "approve" | "reject" | "budgetBalance">;
+
 export type IncidentDeps = {
-  bd: BrightDataAdapter;
+  bd: HealAdapter;
   llm: LlmAdapter;
   store: Store;
   collectorId: string;
+  /** Set for a collector with no contract. V1 there reduces to "preview is
+   *  non-empty" plus the hardcode detector, because there are no fields,
+   *  goldens or invariants to gate against — and a vacuous gate is not a gate,
+   *  so the fix waits for a human instead of auto-approving. */
+  requiresHumanApproval?: boolean;
   log?: (msg: string) => void;
 };
 
-export async function rawToRun(raw: RawRow, store: Store, ts: number): Promise<RunRecord> {
-  const { snapshotHtml, url, error_code, fields } = splitRow(raw);
-  const snapshot_ref = snapshotHtml ? await store.saveSnapshot(snapshotHtml) : undefined;
-  return { url: url ?? "unknown", fields, error_code, snapshot_ref, ts };
-}
-
-async function canarySweep(deps: IncidentDeps, contract: Contract): Promise<RunRecord[]> {
-  const out: RunRecord[] = [];
-  for (const c of contract.canaries) {
-    const raw = await deps.bd.runSync(deps.collectorId, c.url);
-    await deps.store.addCredits(1);
-    out.push(await rawToRun(raw, deps.store, Date.now()));
-  }
-  return out;
+/** Dataset rows carry no HTML, so the snapshot normally comes from the free
+ *  self-fetch archive rather than the row itself. */
+export async function rawToRun(
+  raw: RawRow,
+  store: Store,
+  ts: number,
+  snapshotHtml?: string,
+): Promise<RunRecord> {
+  const split = splitRow(raw);
+  const html = snapshotHtml ?? split.snapshotHtml;
+  const snapshot_ref = html ? await store.saveSnapshot(html) : undefined;
+  return { url: split.url ?? "unknown", fields: split.fields, error_code: split.error_code, snapshot_ref, ts };
 }
 
 export async function driveIncident(
   incident: Incident,
   contract: Contract,
-  preIncidentSweep: RunRecord[],
   deps: IncidentDeps,
 ): Promise<IncidentRecord> {
   const { store, bd, llm } = deps;
@@ -83,7 +102,8 @@ export async function driveIncident(
     return finish(incident.route === "infra" ? "infra" : incident.route === "dead" ? "dead" : undefined);
   }
 
-  // Diagnose inputs: last-good + current snapshot for the worst-hit canary.
+  // Diagnose inputs: last-good + current snapshot for the worst-hit URL. Both
+  // come from the archive, which captures pages the scraper itself never did.
   const failingFields = [...new Set(incident.signals.map((s) => s.field).filter((f): f is string => !!f))];
   const hitUrl =
     incident.signals.find((s) => s.url)?.url ?? incident.records.find((r) => r.snapshot_ref)?.url;
@@ -102,13 +122,31 @@ export async function driveIncident(
 
   const priorFailures: string[] = [];
   for (let attempt = 1; attempt <= MAX_HEAL_ATTEMPTS; attempt++) {
+    const recentHeals = store.healAttemptsSince(contract.scraper, Date.now() - DAY_MS);
+    if (recentHeals >= HEALS_PER_COLLECTOR_PER_DAY) {
+      await store.setCollectorState(contract.scraper, "quarantined");
+      log(`incident ${rec.id}: ${recentHeals} heals in the last 24h for ${contract.scraper} — cap reached, quarantining instead of healing`);
+      return finish("quarantined");
+    }
+    const balance = await bd.budgetBalance();
+    if (balance != null && balance < BUDGET_FLOOR) {
+      await store.setCollectorState(contract.scraper, "quarantined");
+      log(`incident ${rec.id}: budget balance ${balance} below floor ${BUDGET_FLOOR} — refusing to heal`);
+      return finish("quarantined");
+    }
+
     await store.setCollectorState(contract.scraper, "healing");
     const evidence: EvidencePack = buildEvidence(incident, contract, lastGoodHtml, currentHtml, priorFailures);
     const prompt = await llm.healPrompt(evidence);
     rec.prompt = prompt;
     rec.evidence_ref = await store.saveSnapshot(JSON.stringify(evidence, null, 2));
     log(`incident ${rec.id}: heal attempt ${attempt} — "${prompt.slice(0, 100)}…"`);
-    await store.audit({ event: "heal_start", id: rec.id, attempt, prompt });
+    // scraper is on the event so the daily per-collector heal budget can be
+    // rebuilt from the audit log after a restart.
+    await store.audit({ event: "heal_start", id: rec.id, scraper: contract.scraper, attempt, prompt });
+    // A heal is the only spend ANANSI still initiates, so it is the only thing
+    // worth counting.
+    await store.addCredits(1);
 
     const heal = await bd.heal(deps.collectorId, prompt, { url: hitUrl, timeoutSec: 1800 });
     if (heal.status !== "awaiting_approval") {
@@ -123,7 +161,7 @@ export async function driveIncident(
       return { url, fields };
     });
     const v1 = verifyV1(contract, rows, currentSnapshots, failingFields);
-    rec.heal_attempts.push({ prompt, diff_summary: heal.diff_summary ?? "", verdict: v1, phase: "v1", ts: Date.now() });
+    rec.heal_attempts.push({ prompt, diff_summary: heal.diff_summary ?? "", verdict: v1, ts: Date.now() });
     await store.audit({ event: "verify_v1", id: rec.id, attempt, pass: v1.pass, confidence: v1.confidence, gates: v1.gates });
 
     if (!v1.pass) {
@@ -135,34 +173,28 @@ export async function driveIncident(
       continue;
     }
 
-    // Promote, then V2 on the full canary sweep before the incident closes.
-    await bd.approve(deps.collectorId);
-    await store.setCollectorState(contract.scraper, "verifying");
-    await store.audit({ event: "approved", id: rec.id, attempt });
-    const sweep = await canarySweep(deps, contract);
-    const v2 = verifyV2(contract, sweep, preIncidentSweep, store.history(contract.scraper));
-    rec.heal_attempts.push({ prompt, diff_summary: heal.diff_summary ?? "", verdict: v2, phase: "v2", ts: Date.now() });
-    await store.audit({ event: "verify_v2", id: rec.id, pass: v2.pass, confidence: v2.confidence, gates: v2.gates, repin_flags: v2.repin_flags });
-
-    if (v2.pass) {
-      for (const run of sweep) {
-        await store.appendRun({ ...run, scraper: contract.scraper, healthy: true });
-      }
-      if (v2.repin_flags.length) {
-        log(`incident ${rec.id}: promoted value drifted from golden anchor — flagged for human re-pin: ${JSON.stringify(v2.repin_flags)}`);
-      }
-      await store.setCollectorState(contract.scraper, "watching");
-      log(`incident ${rec.id}: promoted (confidence ${v2.confidence.toFixed(2)})`);
-      return finish("promoted", "gate");
+    if (deps.requiresHumanApproval) {
+      // Left pending on the platform on purpose. The incident stays open, which
+      // also keeps the monitor from dispatching further jobs for this collector
+      // until a human has acted.
+      await store.setCollectorState(contract.scraper, "incident_open");
+      await store.audit({ event: "awaiting_human_approval", id: rec.id, attempt, reason: "no contract pinned — V1 cannot gate" });
+      rec.credits_spent = store.creditsSpent() - creditsBefore;
+      await store.putIncident(rec);
+      log(`incident ${rec.id}: V1 passed but this collector has no contract — fix left awaiting_approval for a human`);
+      return rec;
     }
 
-    // V2 regression after approve: rollback is dashboard-only.
-    await store.setCollectorState(contract.scraper, "quarantined");
-    log(`incident ${rec.id}: V2 FAILED after approve — roll back via the Versions menu in the dashboard (no CLI rollback), collector quarantined`);
-    return finish("rolled_back");
+    await bd.approve(deps.collectorId);
+    await store.audit({ event: "approved", id: rec.id, attempt });
+    // watching = approved, awaiting Bright Data's next scheduled run as the
+    // regression check. The monitor promotes or quarantines on what it sees.
+    await store.setCollectorState(contract.scraper, "watching");
+    log(`incident ${rec.id}: promoted (V1 confidence ${v1.confidence.toFixed(2)}) — next scheduled run verifies it`);
+    return finish("promoted", "gate");
   }
 
-  // Two failed heals: reject any pending fix already handled above; quarantine.
+  // Two failed heals: any pending fix was already rejected above; quarantine.
   await store.setCollectorState(contract.scraper, "quarantined");
   log(`incident ${rec.id}: ${MAX_HEAL_ATTEMPTS} heal attempts failed — QUARANTINED, human attention required`);
   return finish("quarantined");

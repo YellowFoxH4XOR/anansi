@@ -1,13 +1,16 @@
-// Real adapter: shells out to the `brightdata` CLI. JSON lands in a temp file
-// via -o (stdout carries progress noise). Heal prompts are pre-capped at 1000
-// chars by core/diagnose/prompt.ts; we assert rather than silently truncate.
+// Real adapter: shells out to the `brightdata` CLI for the three write
+// operations — heal, approve, reject. JSON lands in a temp file via -o (stdout
+// carries progress noise). Heal prompts are pre-capped at 1000 chars by
+// core/diagnose/prompt.ts; we assert rather than silently truncate.
+//
+// `scraper run` is deliberately absent: Bright Data owns the schedule.
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BrightDataAdapter, HealOpts, HealResponse, RawRow } from "./types.js";
+import type { BrightDataAdapter, HealOpts, HealResponse } from "./types.js";
 
 const exec = promisify(execFile);
 
@@ -28,25 +31,6 @@ export class RealBrightData implements BrightDataAdapter {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-  }
-
-  async runSync(collectorId: string, url: string): Promise<RawRow> {
-    // --sync is single-URL only; server caps sync runs at 25–50s.
-    const rows = await this.cliJson<RawRow | RawRow[]>(
-      ["scraper", "run", collectorId, url, "--sync"],
-      90_000,
-    );
-    const row = Array.isArray(rows) ? (rows[0] ?? {}) : rows;
-    row.url ??= url;
-    return row;
-  }
-
-  async runBatch(collectorId: string, urls: string[]): Promise<RawRow[]> {
-    const rows = await this.cliJson<RawRow[]>(
-      ["scraper", "run", collectorId, "--urls", urls.join(",")],
-      15 * 60_000,
-    );
-    return Array.isArray(rows) ? rows : [rows];
   }
 
   async heal(collectorId: string, prompt: string, opts: HealOpts = {}): Promise<HealResponse> {

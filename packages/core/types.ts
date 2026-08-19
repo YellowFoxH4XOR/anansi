@@ -20,13 +20,16 @@ export type GoldenSpec = GoldenString | GoldenNumber | GoldenEnum;
 export type Canary = { url: string; goldens: Record<string, GoldenSpec> };
 
 export type Contract = {
+  /** Display name and store key. Identity is collector_id — a scraper built in
+   *  Studio is discovered by id and monitored whether or not a contract names it. */
   scraper: string;
   collector_id?: string;
+  /** May be empty: a collector with no pinned goldens is still monitored for
+   *  platform failures. Absence of goldens is not absence of monitoring. */
   canaries: Canary[];
   fields: Record<string, FieldSpec>;
   invariants: string[];
   fill_rate_min: number;
-  cadence_minutes: number;
   exclude_fields_containing_pii?: boolean;
 };
 
@@ -73,6 +76,9 @@ export type Healthy = { kind: "healthy"; warnings: Violation[] };
 export type SenseResult = Incident | Healthy;
 
 // Per-collector state machine (architecture.md).
+// `verifying` has no producer since post-approval verification became Bright
+// Data's own next scheduled run; it stays in the union so incidents recorded
+// before that change still render.
 export type CollectorState =
   | "healthy"
   | "incident_open"
@@ -93,7 +99,6 @@ export type HealAttempt = {
   prompt: string;
   diff_summary: string;
   verdict?: Verdict;
-  phase: "v1" | "v2";
   ts: number;
 };
 
@@ -109,6 +114,7 @@ export type IncidentRecord = {
   current_ref?: string;
   prompt?: string;
   heal_attempts: HealAttempt[];
+  // `rolled_back` is likewise legacy-render-only: it was V2's failure outcome.
   resolution?: "promoted" | "quarantined" | "rolled_back" | "infra" | "dead";
   credits_spent: number;
   wall_ms?: number;

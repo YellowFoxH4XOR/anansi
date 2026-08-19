@@ -26,12 +26,15 @@ export type SenseOutput = {
   flags: PriorFlags; // feed back into the next sweep's evaluate()
 };
 
-const ROUTE_PRECEDENCE: Route[] = ["infra", "dead", "config", "heal", "retry"];
+// Shared with the job-level classifier so a job routed by its rows and an
+// incident routed by its contract violations cannot disagree about which lane
+// wins. Two copies of this array would drift.
+export const ROUTE_PRECEDENCE: readonly Route[] = ["infra", "dead", "config", "heal", "retry"];
 
 // Fields Scraper Studio attaches to every row regardless of what the parser
 // collected. None of them is scraped data, so a row carrying only these
 // returned nothing at all.
-const SYSTEM_FIELDS = new Set([
+export const SYSTEM_FIELDS = new Set([
   "input",
   "prime_input",
   "error",

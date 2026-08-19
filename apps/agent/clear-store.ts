@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import { Store } from "../../packages/adapters/store/index.js";
 
-const RUNTIME_FILES = ["runs.jsonl", "incidents.jsonl", "audit.jsonl", "state.json"];
+const RUNTIME_FILES = ["runs.jsonl", "incidents.jsonl", "audit.jsonl", "jobs.jsonl", "state.json"];
 
 async function removeIfPresent(path: string): Promise<boolean> {
   try {
