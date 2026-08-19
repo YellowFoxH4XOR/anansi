@@ -44,8 +44,11 @@ class FakeApi {
     return this.collectorList;
   }
 
-  async jobs(opts: { collector: string }): Promise<Job[]> {
+  readonly windows: { fromDate: string; toDate: string }[] = [];
+
+  async jobs(opts: { collector: string; fromDate: string; toDate: string }): Promise<Job[]> {
     this.calls.push(`jobs:${opts.collector}`);
+    this.windows.push({ fromDate: opts.fromDate, toDate: opts.toDate });
     return (this.jobsByCollector[opts.collector] ?? []).map((j) => ({ collector: opts.collector, ...j }));
   }
 
@@ -485,7 +488,10 @@ describe("pure helpers", () => {
       lookbackDays: 1,
       retentionDays: 16,
     });
-    expect(w).toEqual({ fromDate: "2025-08-18", toDate: "2025-08-19" });
+    // Padded a day at each end: the endpoint filters by date and does not say
+    // which timezone it reads them in, so a UTC-exact window hides every job an
+    // account east of UTC has already filed under tomorrow.
+    expect(w).toEqual({ fromDate: "2025-08-17", toDate: "2025-08-20" });
   });
 
   it("never asks for jobs older than the platform retains", () => {
@@ -493,7 +499,7 @@ describe("pure helpers", () => {
       lookbackDays: 1,
       retentionDays: 16,
     });
-    expect(w.fromDate).toBe("2025-08-03");
+    expect(w.fromDate).toBe("2025-08-02");
   });
 
   it("attributes dataset rows and counts the ones it cannot", () => {
@@ -788,5 +794,55 @@ describe("a job with no dataset is settled, never retried forever", () => {
     const logs: string[] = [];
     await pollTwice(apiWith(new BrightDataApiError("/dca/dataset", 429, "slow down")), logs);
     expect(store.jobLedgerState("vj_preview")).toBe("deferred");
+  });
+});
+
+describe("the job window survives the platform's undocumented date timezone", () => {
+  // Observed live: an account on IST had three of its five runs — including
+  // BOTH scheduled ones — invisible to the monitor. A run at 02:30 IST is 21:00
+  // UTC the day before, so the platform files it under a date our UTC-computed
+  // `to_date` had already excluded. The two runs that did appear were exactly
+  // the two whose local date matched their UTC date.
+  const IST_0230 = Date.parse("2026-08-19T21:05:00Z"); // 2026-08-20 02:35 IST
+
+  it("asks for tomorrow as well as today", () => {
+    const w = pollWindow({ last_polled_ms: IST_0230 }, IST_0230, { lookbackDays: 1, retentionDays: 16 });
+    expect(w.toDate).toBe("2026-08-20");
+    expect(w.fromDate).toBe("2026-08-17");
+  });
+
+  it("still refuses to ask past the retention floor by more than the pad", () => {
+    // Over-fetching is free — the ledger makes a job a one-time fact — but the
+    // window must not grow without bound either.
+    const w = pollWindow({ last_polled_ms: Date.parse("2020-01-01T00:00:00Z") }, IST_0230, {
+      lookbackDays: 1,
+      retentionDays: 16,
+    });
+    expect(w.fromDate).toBe("2026-08-02");
+  });
+
+  it("pads the seed window too, so first boot cannot mistake an old run for the newest", async () => {
+    clock = IST_0230;
+    const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [] });
+    await monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]) }).pollCollector(COLLECTOR);
+    // seedCursor runs first, then the poll — both windows must reach tomorrow.
+    expect(api.windows.length).toBeGreaterThan(0);
+    for (const w of api.windows) expect(w.toDate).toBe("2026-08-20");
+  });
+
+  it("does not double-handle a job just because the window overlaps itself", async () => {
+    // The pad means consecutive polls ask for overlapping ranges and see the
+    // same job repeatedly. That is safe only because the ledger settles it.
+    clock = IST_0230;
+    const job: Job = { id: "j_1", finished: "2026-08-19T21:00:00Z", data_lines: 4 };
+    const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [{ id: "j_seed", finished: "2026-08-18T09:00:00Z", data_lines: 4 }] }, {}, { j_seed: goldenRows(), j_1: goldenRows() });
+    const monitor = monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]) });
+    await monitor.pollCollector(COLLECTOR);
+    pushJob(api, COLLECTOR, job);
+
+    const first = await monitor.pollCollector(COLLECTOR);
+    const second = await monitor.pollCollector(COLLECTOR);
+    expect(first.jobs_handled).toBe(1);
+    expect(second.jobs_handled).toBe(0);
   });
 });

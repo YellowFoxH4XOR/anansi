@@ -96,7 +96,21 @@ function utcDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-/** Day-granularity window, clamped to the platform's retention floor. */
+/** The jobs endpoint filters by DATE, and does not document which timezone it
+ *  reads those dates in. We compute ours in UTC, so an account east of UTC has
+ *  a window every "today" job falls outside of: a run at 02:30 IST is 21:00 UTC
+ *  the previous day, and asking for `to_date` = that UTC day hides every job the
+ *  platform files under tomorrow. Observed live — three of five runs, including
+ *  both scheduled ones, were invisible to the monitor.
+ *
+ *  So every window is padded by a day at each end. Over-fetching is free: the
+ *  job ledger already guarantees a job is acted on at most once, no matter how
+ *  often it is offered. Under-fetching loses a run permanently, because there is
+ *  no second chance at a finished job. */
+const WINDOW_PAD_MS = DAY_MS;
+
+/** Day-granularity window, clamped to the platform's retention floor and padded
+ *  for the undocumented timezone. */
 export function pollWindow(
   cursor: { last_polled_ms: number } | undefined,
   nowMs: number,
@@ -105,7 +119,7 @@ export function pollWindow(
   const anchor = cursor?.last_polled_ms ? cursor.last_polled_ms : nowMs;
   const floor = nowMs - cfg.retentionDays * DAY_MS;
   const from = Math.max(Math.min(anchor - cfg.lookbackDays * DAY_MS, nowMs), floor);
-  return { fromDate: utcDay(from), toDate: utcDay(nowMs) };
+  return { fromDate: utcDay(from - WINDOW_PAD_MS), toDate: utcDay(nowMs + WINDOW_PAD_MS) };
 }
 
 /** Dataset rows → RunRecord[]. A row nobody can attribute to a URL breaks both
@@ -249,8 +263,12 @@ export class Monitor {
     const now = this.now();
     const jobs = await api.jobs({
       collector: collectorId,
-      fromDate: utcDay(now - this.cfg.retentionDays * DAY_MS),
-      toDate: utcDay(now),
+      // Padded for the same undocumented timezone as pollWindow. Seeding against
+      // a short window is worse than polling against one: it decides which job
+      // is "current" at first boot, and a missing today would make a two-day-old
+      // run look like the newest thing that ever happened.
+      fromDate: utcDay(now - this.cfg.retentionDays * DAY_MS - WINDOW_PAD_MS),
+      toDate: utcDay(now + WINDOW_PAD_MS),
     });
     // Only terminal jobs are seeded. Marking a still-running job handled would
     // discard its result the moment it finished.
