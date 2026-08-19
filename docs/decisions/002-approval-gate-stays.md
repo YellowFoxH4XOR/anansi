@@ -6,6 +6,13 @@
 Bright Data's CLI offers `--auto-approve`: a heal can promote itself with no review. The
 maximally "autonomous" demo would use it. We deliberately do not.
 
+> **Amended by [ADR-005](005-verify-v2-dropped.md).** V2 below described a
+> post-approval canary sweep that ANANSI fired itself. Under
+> [ADR-004](004-monitor-not-scheduler.md) ANANSI triggers no collections, so V2
+> is gone: the verification is Bright Data's own next scheduled run, which the
+> monitor observes. Everything else in this ADR — the gate itself, the mandatory
+> reject, the two-attempt cap — stands unchanged, and V1 is untouched.
+
 ## Decision
 Every heal stops at the approval gate (`status: awaiting_approval`). Verification is
 two-phase, because the CLI's `--url` on heal is cosmetic ("not sent to the heal call") and
@@ -13,10 +20,12 @@ two-phase, because the CLI's `--url` on heal is cosmetic ("not sent to the heal 
 pre-approval:
 - **V1, pre-approval, on `preview_result`:** contract clean → invariants hold → golden check
   for every row attributable via its collected `input.url` field. All gates are hard ANDs.
-- **V2, post-approval, before the incident closes:** the full 3–5-canary sweep — goldens in
+- ~~**V2, post-approval, before the incident closes:** the full 3–5-canary sweep — goldens in
   band → no new drift → regression check (fields that weren't broken still aren't). Failure
-  routes to Versions rollback (dashboard, manual) + quarantine.
-V1 pass → ANANSI approves programmatically and runs V2; V1 fail → the pending fix is
+  routes to Versions rollback (dashboard, manual) + quarantine.~~ *(dropped — ADR-005; the
+  next scheduled run is the verification, and a failure on it quarantines rather than
+  re-healing.)*
+V1 pass → ANANSI approves programmatically and the collector moves to `watching`; V1 fail → the pending fix is
 **rejected** (`approve --reject` — mandatory before re-healing) and the loop retries with the
 failure in the evidence pack; two failed heal attempts → reject + quarantine, stop spending.
 The console's confidence number is a weighted per-field pass fraction for the audit trail;

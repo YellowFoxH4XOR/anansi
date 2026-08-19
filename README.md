@@ -9,6 +9,12 @@ diagnosis itself from a DOM diff, drives Bright Data's own healer, verifies the 
 against pinned golden records, and only then promotes it. Every incident is logged, costed, and
 reversible.
 
+ANANSI is a **monitor, not a scheduler**. It never triggers a collection: Bright Data owns the
+schedule, and ANANSI polls the platform for runs that already happened. The fleet is
+auto-discovered from the account, so a scraper built in Studio is watched with no config edit,
+and a data contract is an optional overlay that adds goldens on top of platform-failure
+monitoring. See [ADR-004](docs/decisions/004-monitor-not-scheduler.md).
+
 Built for **Into the Scrape-Verse** (WeMakeDevs × Bright Data, Aug 17–23, 2026).
 
 > One-line pitch: *Bright Data made scrapers that can heal. Anansi makes scrapers that know
@@ -23,7 +29,7 @@ band catches what null-checking never could.
 
 ### Screenshots
 
-<!-- screenshot: console — incident trace (vertical stage timeline, credits + duration per node) -->
+<!-- screenshot: console — incident trace (vertical stage timeline, heal attempts + duration per node) -->
 <!-- screenshot: console — split diff (last-good DOM vs mutated DOM beside the proposed code diff) -->
 <!-- screenshot: Mutation Lab /__control panel, one button per mutation -->
 <!-- screenshot: Scraper Studio IDE with scraper/lab-scraper.js source (tag_html / collect visible) -->
@@ -32,54 +38,58 @@ band catches what null-checking never could.
 
 ```mermaid
 flowchart TD
-    S["SENSE<br/>canary sweep · 5 signals"] --> T{"TRIAGE<br/>error_code taxonomy"}
+    P["POLL<br/>discover collectors · read finished jobs"] --> S["SENSE<br/>job health + 6 contract signals"]
+    S --> T{"TRIAGE<br/>error_code taxonomy"}
     T -->|"blocked · proxy · captcha"| I["infra lane — never healed"]
-    T -->|"transient noise"| R["retry with backoff"]
-    T -->|"the page changed"| D["DIAGNOSE<br/>DOM diff → ≤1000-char prompt"]
+    T -->|"transient noise"| R["retry — wait for the next scheduled run"]
+    T -->|"the page changed"| D["DIAGNOSE<br/>archived-good vs current DOM → ≤1000-char prompt"]
     D --> H["HEAL<br/>brightdata scraper heal —<br/>stops at awaiting_approval"]
     H --> V1{"VERIFY V1<br/>preview_result vs contract + goldens"}
     V1 -->|"pass"| A["APPROVE<br/>brightdata scraper approve"]
+    V1 -->|"pass, no contract"| HU["awaiting_human_approval<br/>nothing to gate against"]
     V1 -->|"fail — reject pending fix"| D
     V1 -->|"2 strikes"| Q["QUARANTINE<br/>page a human, stop spending"]
-    A --> V2{"VERIFY V2<br/>full canary sweep + regression check"}
-    V2 -->|"pass"| W["WATCHING → healthy"]
-    V2 -->|"regression"| RB["rollback via Versions menu<br/>+ quarantine"]
+    A --> W["WATCHING<br/>Bright Data's next scheduled run is the verification"]
+    W -->|"clean run"| OK["healthy"]
+    W -->|"failed run"| Q
 ```
 
-Full walkthrough in [docs/architecture.md](docs/architecture.md); the five detection signals
-and the goldens discipline in [docs/data-contract.md](docs/data-contract.md).
+Full walkthrough in [docs/architecture.md](docs/architecture.md); the six detection signals
+and the goldens discipline in [docs/data-contract.md](docs/data-contract.md). Post-approval
+regression checking used to be a second synthetic sweep ("verify V2"); it is now the next real
+scheduled run — [ADR-005](docs/decisions/005-verify-v2-dropped.md).
 
 ## Quickstart
 
 ```bash
 npm install
-npm test                 # 70 offline tests: sense/verify engines, incident driver, Lab, adapters
+npm test                 # 166 offline tests: sense/verify engines, monitor, archive, Lab, adapters
 
 npm run lab              # Mutation Lab on :4600 — break it from /__control
 npx tsx scripts/seed-demo.ts   # drive a full M2 incident through the fake adapter
 
-npm --prefix console-ui install && npm run ui:build   # build the React console (once)
+npm --prefix apps/console-ui install && npm run ui:build   # build the React console (once)
 npm run console          # console on :4700 — React SPA if built, SSR fallback if not
 
-ANANSI_ADAPTER=fake npm run scheduler   # the loop, fixture-first — the no-credits path
-ANANSI_ADAPTER=live npm run scheduler   # rehearsal: real fetches of a running Lab, simulated heals
-npm run scheduler                        # the real thing (brightdata CLI logged in)
+# The monitor always reads job history over REST, so BRIGHTDATA_API_KEY is required.
+# ANANSI_ADAPTER selects the HEAL seam only.
+BRIGHTDATA_API_KEY=... ANANSI_ADAPTER=fake npm run monitor   # real reads, banked heals — no credits
+BRIGHTDATA_API_KEY=... npm run monitor                        # the real thing (brightdata CLI logged in)
 ```
 
 Hosting it: `docker compose up --build` runs the whole stack (Lab, console, agent), and
 [docs/deploy-coolify.md](docs/deploy-coolify.md) is the Coolify walkthrough — two public URLs,
 one for the storefront and one for the console.
 
-Everything develops fixture-first: `ANANSI_ADAPTER=fake` swaps in a Bright Data adapter that
-replays banked `heal.json` responses, so the console, gates, and tests never touch the network
-and spend no credits. `ANANSI_ADAPTER=live` is the middle rung — *rehearsal mode* — which
-fetches a running Lab for real and parses it with the scraper's own selectors, but simulates the
-heal; the console flags it with a `rehearsal` badge and stamps every simulated diff, so it can
-never be mistaken for a platform run. The real path additionally needs the `brightdata` CLI logged in and the
-`collector_id` from `scraper create` filled into
-[contracts/lab-storefront.yaml](contracts/lab-storefront.yaml) (it ships as `null` until that
-wiring lands). `examples/structured-output.json` shows the scraper's collected rows and a
-closed incident record (Rule 9).
+Everything develops fixture-first: `ANANSI_ADAPTER=fake` swaps in a heal adapter that replays
+banked `heal.json` responses, so the gates and tests spend no credits and never write to the
+platform. Only the *write* side has a fake — there is nothing worth faking about reading job
+history, so the read client is always the real REST one. The real path additionally needs the
+`brightdata` CLI logged in; pinning goldens to a discovered scraper needs its `collector_id` in
+[contracts/lab-storefront.yaml](contracts/lab-storefront.yaml), but a collector with no contract
+is still discovered and still monitored for platform failures.
+`examples/structured-output.json` shows the scraper's collected rows and a closed incident
+record (Rule 9).
 
 ## How Bright Data Scraper Studio is used
 
@@ -89,29 +99,31 @@ built from a Studio primitive:
 | Studio primitive | How ANANSI uses it | Where |
 |---|---|---|
 | `scraper create` | The scraper is hand-authored — interaction + parser code written for the Studio IDE, not generated | [scraper/lab-scraper.js](scraper/lab-scraper.js) |
-| `scraper run --sync` | Canary sweeps: 3–5 single-URL runs per cadence tick against pinned known-stable URLs | [shell/scheduler.ts](shell/scheduler.ts), [adapters/brightdata/real.ts](adapters/brightdata/real.ts) |
-| `tag_html()` snapshots | Tagged on every page load; Scraper Studio surfaces the tag as a `page_html` output field (plus an auto-added `page_html_url`), which the adapter seam normalises — the stored last-good/current pair feeds the DOM diff | [scraper/lab-scraper.js](scraper/lab-scraper.js), [core/diagnose/](core/diagnose/) |
-| `error_code` taxonomy | Every code routes to a triage lane: **heal** (the page changed) · **infra** (`blocked`, `proxy*` — never healed, [ADR-003](docs/decisions/003-blocked-never-healed.md)) · **retry** · **dead** · **config** | [core/sense/triage.ts](core/sense/triage.ts), [docs/brightdata-notes.md](docs/brightdata-notes.md) |
-| `scraper heal` | Driven with an **auto-generated prompt** built from the DOM diff — symptom, located change, expected output — hard-capped at the CLI's 1000 chars. Never `--auto-approve` | [core/diagnose/prompt.ts](core/diagnose/prompt.ts), [shell/incident.ts](shell/incident.ts) |
-| `awaiting_approval` + `preview_result` | Heal stops at the platform's own gate; V1 judges the preview rows (attributable via the collected `input.url`) against contract, invariants, goldens, and a hardcode detector | [core/verify/v1.ts](core/verify/v1.ts) |
-| `scraper approve` / `--reject` | Approve only after V1 passes; a failed V1 **rejects the pending fix first** (the CLI's documented retry flow), then re-heals with the failure in evidence | [shell/incident.ts](shell/incident.ts), [ADR-002](docs/decisions/002-approval-gate-stays.md) |
-| `collector_id` | Declared in the contract, threaded through every CLI call, and joined (as the scraper ⇄ collector pair) across store state, incident records, and console views | [contracts/lab-storefront.yaml](contracts/lab-storefront.yaml), [shell/main.ts](shell/main.ts), [adapters/store/index.ts](adapters/store/index.ts) |
+| Collector + job REST API | Read-only: `GET /dca/collectors_list` discovers the fleet, `GET /dca/collector/jobs` reads runs Bright Data already performed, `GET /dca/dataset` reads their rows. ANANSI never triggers a collection | [packages/adapters/brightdata/api.ts](packages/adapters/brightdata/api.ts), [apps/agent/monitor.ts](apps/agent/monitor.ts) |
+| `tag_html()` snapshots | Tagged on every page load; Scraper Studio surfaces the tag as a `page_html` output field (plus an auto-added `page_html_url`), which the adapter seam normalises. Most scrapers collect no snapshot, so ANANSI also keeps its own free plain-GET archive — the stored last-good/current pair is what feeds the DOM diff | [scraper/lab-scraper.js](scraper/lab-scraper.js), [apps/agent/archive.ts](apps/agent/archive.ts), [packages/core/diagnose/](packages/core/diagnose/) |
+| `error_code` taxonomy | Every code routes to a triage lane: **heal** (the page changed) · **infra** (`blocked`, `proxy*` — never healed, [ADR-003](docs/decisions/003-blocked-never-healed.md)) · **retry** · **dead** · **config**. Per-input codes arrive inside dataset rows, not only on the job | [packages/core/sense/triage.ts](packages/core/sense/triage.ts), [docs/brightdata-notes.md](docs/brightdata-notes.md) |
+| `scraper heal` | Driven with an **auto-generated prompt** built from the DOM diff — symptom, located change, expected output — hard-capped at the CLI's 1000 chars. Never `--auto-approve` | [packages/core/diagnose/prompt.ts](packages/core/diagnose/prompt.ts), [apps/agent/incident.ts](apps/agent/incident.ts) |
+| `awaiting_approval` + `preview_result` | Heal stops at the platform's own gate; V1 judges the preview rows (attributable via the collected `input.url`) against contract, invariants, goldens, and a hardcode detector | [packages/core/verify/v1.ts](packages/core/verify/v1.ts) |
+| `scraper approve` / `--reject` | Approve only after V1 passes; a failed V1 **rejects the pending fix first** (the CLI's documented retry flow), then re-heals with the failure in evidence. With no contract to gate against, the fix is left `awaiting_approval` for a human | [apps/agent/incident.ts](apps/agent/incident.ts), [ADR-002](docs/decisions/002-approval-gate-stays.md) |
+| `collector_id` | The fleet's identity: discovered from the platform, optionally joined to a contract, and threaded across store state, incident records, and console views | [contracts/lab-storefront.yaml](contracts/lab-storefront.yaml), [apps/agent/main.ts](apps/agent/main.ts), [packages/adapters/store/index.ts](packages/adapters/store/index.ts) |
 
-Every one of these calls goes through a single adapter interface implemented twice:
-[adapters/brightdata/real.ts](adapters/brightdata/real.ts) shells out to the `brightdata` CLI;
-[adapters/brightdata/fake.ts](adapters/brightdata/fake.ts) replays banked fixtures. The loop,
-gates, console, and tests all run today against the fake; pointing the same code at a live
-account is the `scraper create` + `collector_id` wiring described in the Quickstart.
+The **write** side goes through a single adapter interface implemented twice:
+[packages/adapters/brightdata/real.ts](packages/adapters/brightdata/real.ts) shells out to the
+`brightdata` CLI; [packages/adapters/brightdata/fake.ts](packages/adapters/brightdata/fake.ts)
+replays banked fixtures. That interface has no run/trigger method at all, which is what makes
+"ANANSI never starts a collection" a compile error rather than a code-review catch. The **read**
+side is [packages/adapters/brightdata/api.ts](packages/adapters/brightdata/api.ts) and is always
+real.
 
 ## Judging criteria → where to look
 
 | Criterion | Where to look |
 |---|---|
-| "Solves a clear, useful problem" | The silent-lie failure mode: a scraper returning 200 + valid JSON + a wrong number. [docs/mutations.md](docs/mutations.md) M2, the golden-band signal in [core/sense/goldens.ts](core/sense/goldens.ts), video 0:00–1:00 |
-| "Original approach to web-data collection" | First closure of Bright Data's *own* heal workflow into an autonomous gated loop, with the diagnosis prompt auto-written from a DOM diff ([core/diagnose/prompt.ts](core/diagnose/prompt.ts)). Prior art sized honestly below |
-| "Complete, reliable, well-structured implementation" | Pure core / adapter shell ([docs/architecture.md](docs/architecture.md)) · 51 offline tests (`npm test`, [test/](test/)) · pre-declared scope tiers ([CUTS.md](CUTS.md)) · 3 ADRs ([docs/decisions/](docs/decisions/)) |
+| "Solves a clear, useful problem" | The silent-lie failure mode: a scraper returning 200 + valid JSON + a wrong number. [docs/mutations.md](docs/mutations.md) M2, the golden-band signal in [packages/core/sense/goldens.ts](packages/core/sense/goldens.ts), video 0:00–1:00 |
+| "Original approach to web-data collection" | First closure of Bright Data's *own* heal workflow into an autonomous gated loop, with the diagnosis prompt auto-written from a DOM diff ([packages/core/diagnose/prompt.ts](packages/core/diagnose/prompt.ts)). Prior art sized honestly below |
+| "Complete, reliable, well-structured implementation" | Pure core / adapter shell ([docs/architecture.md](docs/architecture.md)) · 166 offline tests (`npm test`, [test/](test/)) · pre-declared scope tiers ([CUTS.md](CUTS.md)) · 5 ADRs ([docs/decisions/](docs/decisions/)) |
 | "Bright Data Scraper Studio central" | The table above — every loop stage is a Studio primitive; [scraper/lab-scraper.js](scraper/lab-scraper.js) is hand-authored for the Studio IDE |
-| "Accounts for site changes, missing data, extraction failures" | The Mutation Lab ([lab/](lab/), [docs/mutations.md](docs/mutations.md)) breaks the site on demand; 5 signals + triage lanes ([docs/data-contract.md](docs/data-contract.md), [core/sense/triage.ts](core/sense/triage.ts)); quarantine + rollback paths |
+| "Accounts for site changes, missing data, extraction failures" | The Mutation Lab ([apps/ui/](apps/ui/), [docs/mutations.md](docs/mutations.md)) breaks the site on demand; job-health classification plus 6 contract signals and triage lanes ([docs/data-contract.md](docs/data-contract.md), [packages/core/sense/triage.ts](packages/core/sense/triage.ts)); quarantine + rollback paths |
 | "Demo explains problem, workflow, structured output, product" | [docs/demo-script.md](docs/demo-script.md) beat by beat; [examples/structured-output.json](examples/structured-output.json) (collected rows + closed incident record); the console screens |
 
 ## Folder map
@@ -121,23 +133,23 @@ account is the `scraper create` + `collector_id` wiring described in the Quickst
 | [docs/architecture.md](docs/architecture.md) | The five-stage loop, component boundaries, adapter design |
 | [docs/data-contract.md](docs/data-contract.md) | Contract schema, detection signals, golden records |
 | [docs/mutations.md](docs/mutations.md) | Mutation Lab spec — the 3 shipping mutations + stretch |
-| [docs/brightdata-notes.md](docs/brightdata-notes.md) | Verified platform facts: CLI, API, latency, credits, error routing |
-| [docs/runbook.md](docs/runbook.md) | Day-by-day build schedule, D1 hour by hour |
-| [docs/deploy-coolify.md](docs/deploy-coolify.md) | Hosting: three containers, two public URLs, rehearsal vs. real |
+| [docs/brightdata-notes.md](docs/brightdata-notes.md) | Verified platform facts: CLI, REST API, latency, credits, error routing |
+| [docs/runbook.md](docs/runbook.md) | Day-by-day build schedule, plus the operator procedures |
+| [docs/deploy-coolify.md](docs/deploy-coolify.md) | Hosting: three containers, two public URLs |
 | [docs/demo-script.md](docs/demo-script.md) | The 3-minute video, beat by beat, with fallback strategy |
 | [docs/prep-checklist.md](docs/prep-checklist.md) | Everything to finish before Aug 17 |
 | [docs/decisions/](docs/decisions/) | ADRs — drafted now so writing them later is transcription |
 | [CUTS.md](CUTS.md) | Pre-declared scope tiers — the cuts are decided while calm |
-| `core/` | Pure engines: sense (5 signals) · diagnose (DOM diff → prompt) · verify (V1/V2 gates) |
-| `adapters/` | The only I/O: Bright Data CLI (real + fixture fake) · store · LLM |
-| `shell/` | Scheduler (state machine, budget guard) + incident driver |
-| `contracts/` | Per-scraper data contracts: canaries, goldens, invariants, `collector_id` |
-| `lab/` | Mutation Lab storefront (Dockerfile + vercel.json) — see [docs/mutations.md](docs/mutations.md) |
-| `console/` | Console server: incident trace + split diff + fleet strip (SSR fallback) |
-| `console-ui/` | React SPA for the console (Vite; served by `console/` once built) |
+| `packages/core/` | Pure engines: sense (job health + 6 contract signals) · diagnose (DOM diff → prompt) · verify (the V1 gate) |
+| `packages/adapters/` | The only I/O: Bright Data read API + write CLI (real + fixture fake) · store · LLM |
+| `apps/agent/` | Monitor (poll, classify, archive) + incident driver |
+| `contracts/` | Optional per-scraper data contracts: canaries, goldens, invariants, `collector_id` |
+| `apps/ui/` | Mutation Lab storefront (Dockerfile + vercel.json) — see [docs/mutations.md](docs/mutations.md) |
+| `apps/console/` | Console server: fleet, runs, incident trace + split diff (SSR fallback) |
+| `apps/console-ui/` | React SPA for the console (Vite; served by `apps/console/` once built) |
 | `scraper/` | Hand-authored Scraper Studio source (Rule 5) |
-| `scripts/` | `seed-demo.ts` (fixture demo) · `harness.ts` (overnight heal characterization) |
-| `test/` | 51 offline tests over sense, diagnose, verify, the incident driver, and the Lab |
+| `scripts/` | `seed-demo.ts` — seeds a full fixture incident for console work and video prep |
+| `test/` | 166 offline tests over sense, diagnose, verify, the monitor, the archive, the console and the Lab |
 | `examples/` | Committed example structured output (Rule 9) |
 
 ## The claim, sized honestly

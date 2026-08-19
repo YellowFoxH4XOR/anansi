@@ -1,12 +1,23 @@
 # Data contracts & detection signals
 
-Every monitored scraper registers a contract. The contract is the definition of "healthy" —
-all five detection signals evaluate against it.
+A contract is **optional**, and it is an overlay rather than a registration. The fleet is
+discovered from Bright Data (`GET /dca/collectors_list`), so every collector on the account is
+monitored whether or not anyone wrote a YAML file for it:
+
+- **No contract** → platform-failure monitoring only: job failure signals, per-row error codes,
+  row-count collapse. An empty or absent `contracts/` directory is a normal healthy state.
+- **With a contract** → all of the above, plus goldens, tolerance bands, CUSUM and invariants,
+  and a V1 gate with something to judge a proposed fix against.
+
+The contract is the definition of "healthy" for the collector it names. It is joined by
+`collector_id`; a contract without one cannot be attached to any discovered scraper, so its
+goldens are inert and the agent says so at load time.
 
 ## Contract shape
 
 ```yaml
-scraper: lab-storefront          # collector c_xxx
+scraper: lab-storefront          # display name, also the store key
+collector_id: c_msyy76jk20f9e9mrh5   # the join to a discovered scraper — without it, inert
 canaries:                        # 3–5 pinned, known-stable URLs
   - url: https://<lab>/product/echo-speaker
     goldens:                     # hand-pinned correct values = ground truth
@@ -14,7 +25,7 @@ canaries:                        # 3–5 pinned, known-stable URLs
                 similarity_metric: token_set_ratio }   # metric MUST be named — Levenshtein
                 # ratio scores a legit "- Black" suffix 0.84 (false alarm), token_set ~1.0.
                 # Lowercase + strip punctuation first; validate floor vs 2–3 hand-written
-                # legitimate title variants on D2 before trusting 0.85.
+                # legitimate title variants before trusting 0.85.
       price:  { value: 49.99, tolerance_pct: 15 }   # legit sales exist; bands, not equality
       availability: { one_of: ["in stock", "out of stock"] }
 fields:
@@ -25,21 +36,30 @@ fields:
 invariants:                      # cross-field asserts
   - "sale_price == null || sale_price <= price"
   - "price > 0"
-fill_rate_min: 0.9               # fraction of canaries where each required field is non-null
-cadence_minutes: 30              # default 15–60; demo hot-mode override
+fill_rate_min: 0.9               # fraction of rows where each required field is non-null
 exclude_fields_containing_pii: true   # usernames, contacts — rules ban personal data
 ```
 
-## The five signals (evaluation order)
+There is no `cadence_minutes`. Bright Data owns the schedule; ANANSI observes it and infers it
+from job start times to tell whether a collector has gone quiet
+([ADR-004](decisions/004-monitor-not-scheduler.md)). A canary is now a **pinned URL to compare
+against**, not a URL to fetch on a timer — goldens apply to whichever of those URLs turn up in a
+run the platform performed, and the HTML archive plain-fetches them for the DOM diff.
+
+## The six signals (evaluation order)
 
 | # | Signal | Trigger | Routed to |
 |---|--------|---------|-----------|
-| 1 | Hard fail | `error_code` present (see brightdata-notes routing table) | heal OR infra lane |
+| 1 | Hard fail | `error_code` present on the job or on a row (see brightdata-notes routing table); job-level failure with no code to explain it; row count collapsed against the collector's median | heal OR infra lane |
 | 2 | Contract | missing field, wrong type, null-where-required, out of range | heal |
-| 3 | Fill-rate | required field's canary fill drops below `fill_rate_min` | heal |
+| 3 | Fill-rate | required field's fill drops below `fill_rate_min` | heal |
 | 4 | Golden band | pinned URL's value leaves its tolerance band / similarity floor | heal — **this catches the silent lie** |
 | 5 | CUSUM | cumulative drift across run history per field per URL | warn → heal on persistence |
 | 6 | Invariant | cross-field assert fails | heal |
+
+Signal 1 is the only one available without a contract, and it is evaluated first: a job that
+failed at the platform level is not judged against goldens as if its rows were data.
+
 
 ## Why bands + CUSUM, not PSI (short form — full argument in ADR-001)
 
@@ -50,8 +70,9 @@ samples. Instead:
 
 - **Cross-section (n=5):** deterministic per-URL comparison against pinned goldens with
   declared tolerance. No statistics needed; catches wrong-but-plausible values exactly.
-- **Time axis (n=24–288/day/field at our cadence):** **two-sided** CUSUM per field per URL —
-  the standard pair `S⁺_t = max(0, S⁺_{t-1} + (x_t − μ − k))` and
+- **Time axis (n depends on the operator's schedule, typically 24–288/day/field):** **two-sided**
+  CUSUM per field per URL — the standard pair
+  `S⁺_t = max(0, S⁺_{t-1} + (x_t − μ − k))` and
   `S⁻_t = max(0, S⁻_{t-1} + (μ − x_t − k))`, alarm when either exceeds `h` (Page 1954;
   upper-only cannot fire on downward drift, and prices drift down at least as often as up).
   Start with k = 0.5σ, h = 4σ of the field's trailing window, **with a σ floor:
@@ -59,20 +80,25 @@ samples. Instead:
   whose σ ≈ 0, which would collapse k and h to 0 and turn the chart into an equality test
   that defeats the tolerance band. CUSUM's declared role: sustained small shifts *inside*
   the band (which no other signal covers), and list/aggregate metrics where σ is real.
-  Tune on state=none Lab history D2.
+  The sample rate is Bright Data's schedule, not ours, so a sparsely scheduled collector
+  accumulates evidence more slowly — the statistic is unchanged, the latency is not.
 - **Lists only (n≥30 per crawl):** two-sample KS is legitimate for list-page scrapers
   (books sandbox ≈ 20–30 items/page) — compare this crawl's distribution to baseline.
 
 ## Golden records discipline
 
-- Pinned by hand on D1 when each scraper first goes green; updated **only by explicit human
+- Pinned by hand when each scraper first goes green; updated **only by explicit human
   action** — promotion never re-pins (a correct heal fixes the selector; the true value
-  hasn't changed, so the old golden must still match). A promoted value differing from the
-  anchor beyond epsilon flags for human re-pin (see architecture.md: the auto-re-pin ratchet).
-- Verification is two-phase (see architecture.md): **V1 pre-approval** on preview rows —
-  contract clean, invariants, goldens for URL-attributable rows; **V2 post-approval** on the
-  full canary sweep — goldens, no new CUSUM alarms, regression check (previously-healthy
-  fields still healthy).
+  hasn't changed, so the old golden must still match). The automatic "promoted value drifted
+  off the anchor, ask a human to re-pin" flag was produced only by verify V2 and went with it
+  ([ADR-005](decisions/005-verify-v2-dropped.md)); in-band drift is now caught by CUSUM, later
+  and less specifically. The immutability rule itself is unchanged.
+- Verification is single-phase (see architecture.md): **V1, pre-approval**, on the heal's
+  preview rows — contract clean, invariants, goldens for URL-attributable rows, hardcode
+  detector. Confirmation that the fix survived is **Bright Data's next scheduled run**: a clean
+  one moves the collector from `watching` to `healthy`, a failed one quarantines it without a
+  second heal attempt. A collector with no contract has nothing for V1 to judge, so its fix is
+  left `awaiting_approval` for a human rather than gated by an empty conjunction.
 - **Promotion is a conjunction, not a score:** every hard gate must pass — a heal that breaks
   one previously-good field never promotes at any "score". The confidence number shown in the
   console is the weighted per-field pass fraction (required fields weighted 3:1 over
@@ -80,5 +106,5 @@ samples. Instead:
   gate failure, quarantine at 2 failed heals.
 - Fill-rate at n=3–5 canaries is quantized (4/5 = 0.8), so `fill_rate_min: 0.9` is
   deliberately all-or-nothing for required fields; to absorb transient render misses, a null
-  routes to heal only after **2 consecutive** failing sweeps (signal 2 owns the instant
+  routes to heal only after **2 consecutive** failing runs (signal 2 owns the instant
   hard-null case).
