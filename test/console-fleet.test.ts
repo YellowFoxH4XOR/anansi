@@ -165,3 +165,63 @@ describe("overdue is the failure only a monitor can see", () => {
     expect(entry?.expectedEveryMs).toBeUndefined();
   });
 });
+
+describe("the board shows what Bright Data calls a scraper", () => {
+  // The store key is ours: a contract's `scraper:` field, or an opaque collector
+  // id. Neither of those exists in Scraper Studio, so a board full of them is a
+  // board an operator cannot match against their own account — "lab-storefront"
+  // is a name only ANANSI has ever used.
+  it("prefers the platform name over the store key", async () => {
+    const store = await freshStore();
+    await discover(store, "lab-storefront", "c_msyy76jk20f9e9mrh5");
+    await store.setMonitorCursor("lab-storefront", {
+      ...store.monitorCursor("lab-storefront"),
+      platform_name: "anansi-lab",
+      platform_active: true,
+    });
+
+    const [entry] = readFleet(store);
+    // The key stays put — it is identity, and history is filed under it.
+    expect(entry?.name).toBe("lab-storefront");
+    // But the name an operator reads is the one they typed into Studio.
+    expect(entry?.platformName).toBe("anansi-lab");
+  });
+
+  it("names a brand-new scraper nobody wrote a contract for", async () => {
+    // The whole point of auto-discovery: build a scraper in Studio, and it is on
+    // the board under its own name with no config edit. Falling back to the raw
+    // collector id would technically "discover" it and still tell the operator
+    // nothing.
+    const store = await freshStore();
+    await discover(store, "c_brandnew", "c_brandnew");
+    await store.setMonitorCursor("c_brandnew", { ...store.monitorCursor("c_brandnew"), platform_name: "amazon-prices" });
+
+    const [entry] = readFleet(store);
+    expect(entry).toMatchObject({ name: "c_brandnew", platformName: "amazon-prices", contract: "none" });
+  });
+
+  it("says nothing rather than guessing before the first poll", async () => {
+    const store = await freshStore();
+    await discover(store, "c_unpolled", "c_unpolled");
+    expect(readFleet(store)[0]?.platformName).toBeUndefined();
+  });
+
+  it("a paused scraper is off, not overdue", async () => {
+    // isStale would otherwise page someone about a scraper they deliberately
+    // switched off in Studio.
+    const HOUR = 3_600_000;
+    const store = await freshStore();
+    await discover(store, "shop", "shop");
+    await store.setMonitorCursor("shop", {
+      ...store.monitorCursor("shop"),
+      start_times_ms: [0, HOUR, 2 * HOUR, 3 * HOUR, 4 * HOUR],
+      last_job_finish_ms: 4 * HOUR,
+      platform_active: false,
+      seeded: true,
+    });
+
+    const [entry] = readFleet(store, readJobs(store), 500 * HOUR);
+    expect(entry?.paused).toBe(true);
+    expect(entry?.stale).toBeUndefined();
+  });
+});

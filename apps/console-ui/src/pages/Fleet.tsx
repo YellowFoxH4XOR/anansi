@@ -56,7 +56,11 @@ function humanGap(ms: number | undefined): string {
 }
 
 function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: IncidentRecord }) {
-  const { name, state, collectorId, contract, recent, lastRunAt, failed24h, stale, expectedEveryMs } = entry;
+  const { name, platformName, paused, state, collectorId, contract, recent, lastRunAt, failed24h, stale, expectedEveryMs } = entry;
+  // Show what Bright Data calls it. The store key is either a name a contract
+  // invented or a raw collector id, and neither appears anywhere in Studio — so
+  // a board full of those is a board an operator cannot match to their account.
+  const title = platformName ?? name;
   const [runs, setRuns] = useState<RunPoint[]>([]);
   useEffect(() => {
     fetchRuns(name).then(setRuns).catch(() => {});
@@ -72,14 +76,27 @@ function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: 
   return (
     <Panel className="fade-in flex flex-col gap-2" style={{ borderLeft: `3px solid ${STATE_META[state].color}` }}>
       <div className="flex items-center justify-between gap-3">
-        <span className="min-w-0 truncate font-bold" title={name}>
-          {name}
+        <span
+          className="min-w-0 truncate font-bold"
+          title={platformName ? `"${platformName}" on Bright Data${collectorId ? ` · ${collectorId}` : ""}` : name}
+        >
+          {title}
         </span>
-        <StatePill state={state} />
+        <div className="flex shrink-0 items-center gap-1.5">
+          {paused && (
+            <Chip title="Bright Data reports this scraper as inactive. It is not late — it is switched off, so ANANSI does not call it overdue.">
+              paused
+            </Chip>
+          )}
+          <StatePill state={state} />
+        </div>
       </div>
-      {collectorId && collectorId !== name && (
+      {(collectorId || platformName !== name) && (
         <span className="num truncate text-[10.5px]" style={{ color: "var(--muted)" }} title={collectorId}>
-          {collectorId}
+          {collectorId ?? "—"}
+          {/* The contract's own name, only when it differs from the platform's.
+              It is ours, so it is shown as provenance rather than as identity. */}
+          {platformName && platformName !== name && ` · pinned by contract "${name}"`}
         </span>
       )}
       {series ? (

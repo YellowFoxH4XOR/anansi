@@ -91,11 +91,13 @@ export function fleetStrip(fleet: FleetEntry[]): string {
       // contract names this collector, so it is monitored for platform
       // failures only.
       const depth = f.contract === "none" ? " · platform only" : f.contract === "pinned" ? " · contract" : "";
+      // What Bright Data calls it, not what a contract called it.
+      const label = f.platformName ?? f.name;
       const run = f.lastRunAt ? ` · ran ${new Date(f.lastRunAt).toLocaleTimeString()}` : "";
       // A run that never happened leaves no job and no error, so the strip is
       // the only place it can surface at all.
       const overdue = f.stale ? " · OVERDUE" : "";
-      return `<span class="chip" title="${esc(f.collectorId ?? f.name)}"><span class="dot" style="background:${STATE_COLORS[f.state]}"></span>${esc(f.name)} · ${f.state}${depth}${run}${overdue}</span>`;
+      return `<span class="chip" title="${esc(f.collectorId ?? f.name)}"><span class="dot" style="background:${STATE_COLORS[f.state]}"></span>${esc(label)} · ${f.state}${depth}${run}${overdue}</span>`;
     })
     .join("");
   return `<span class="fleet">${chips}</span>`;

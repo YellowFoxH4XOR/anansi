@@ -33,7 +33,11 @@ export type RunTick = { job_id: string; verdict: JobVerdict; ts: number };
 /** A collector discovered on the platform. Contracts are an optional overlay:
  *  `contract: "none"` is a fully monitored scraper, just without goldens. */
 export type FleetEntry = {
+  /** Internal store key. Not a name anyone can look up in Scraper Studio. */
   name: string;
+  /** What Bright Data calls this scraper — the name to show. */
+  platformName?: string;
+  paused?: boolean;
   collectorId?: string;
   state: CollectorState;
   contract: ContractDepth;

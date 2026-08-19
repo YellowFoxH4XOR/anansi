@@ -45,6 +45,18 @@ export type MonitorCursor = {
   /** Recent row counts, newest last — feeds rowVolumeSignals(). */
   line_counts: number[];
   seeded: boolean;
+  /** What Bright Data calls this scraper, refreshed on every poll.
+   *
+   *  The store key is ours and has to stay stable, but it is not a name anyone
+   *  can look up: it is a contract's `scraper:` field, or an opaque collector
+   *  id. Neither exists on the platform. This is the name the operator gave the
+   *  scraper in Studio, and it is what the console shows — so renaming it there
+   *  renames it here, and a scraper nobody wrote a contract for is never a row
+   *  of hex on the board. */
+  platform_name?: string;
+  /** Whether the platform reports the scraper as active. A paused scraper that
+   *  stops running is not overdue; it is off. */
+  platform_active?: boolean;
 };
 
 export const NEW_CURSOR: MonitorCursor = {

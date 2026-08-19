@@ -217,6 +217,13 @@ export class Monitor {
     this.log = deps.log ?? console.log;
   }
 
+  /** What Bright Data calls this scraper. The console shows this rather than
+   *  our store key, which is either a contract's invented name or an opaque id —
+   *  neither of which exists on the platform the operator is looking at. */
+  private platformFor(collectorId: string): Collector | undefined {
+    return this.collectorCache?.list.find((c) => c.id === collectorId);
+  }
+
   private nameFor(collectorId: string): string {
     // Identity is the collector id; the contract's `scraper` is a display name
     // that also keys the store, so an existing collector keeps its history.
@@ -342,7 +349,15 @@ export class Monitor {
       }
     }
 
-    await store.setMonitorCursor(name, { ...store.monitorCursor(name), last_polled_ms: this.now() });
+    const platform = this.platformFor(collectorId);
+    await store.setMonitorCursor(name, {
+      ...store.monitorCursor(name),
+      last_polled_ms: this.now(),
+      // Refreshed every poll, not just at discovery: a scraper renamed in Studio
+      // must not keep its old name on the board.
+      ...(platform?.name ? { platform_name: platform.name } : {}),
+      ...(platform?.active != null ? { platform_active: platform.active } : {}),
+    });
     return report;
   }
 

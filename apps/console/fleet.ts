@@ -25,8 +25,17 @@ export type ContractDepth = "pinned" | "none" | "unknown";
 export type RunTick = { job_id: string; verdict: JobVerdict; ts: number };
 
 export type FleetEntry = {
-  /** Store key: the contract's display name, else the platform collector id. */
+  /** Store key: the contract's display name, else the platform collector id.
+   *  Internal identity — stable, and not a name anyone can look up. */
   name: string;
+  /** What Bright Data calls this scraper. This is what an operator should see:
+   *  the store key is either a name ANANSI invented in a contract or a raw
+   *  collector id, and neither appears anywhere in Scraper Studio. Absent until
+   *  the first poll has reported it. */
+  platformName?: string;
+  /** The platform reports the scraper as paused. A paused scraper that stops
+   *  running is off, not overdue. */
+  paused?: boolean;
   collectorId?: string;
   state: CollectorState;
   contract: ContractDepth;
@@ -56,6 +65,8 @@ export type CursorLike = {
   last_job_finish_ms?: number;
   /** Observed job start times, newest last. Feeds inferSchedule(). */
   start_times_ms?: number[];
+  platform_name?: string;
+  platform_active?: boolean;
 };
 
 export type FleetInput = {
@@ -95,6 +106,8 @@ export function buildFleet(input: FleetInput, nowMs = Date.now()): FleetEntry[] 
     const schedule = inferSchedule(cursor.start_times_ms ?? []);
     return {
       name,
+      ...(cursor.platform_name ? { platformName: cursor.platform_name } : {}),
+      ...(cursor.platform_active === false ? { paused: true } : {}),
       ...(collectorId ? { collectorId } : {}),
       state,
       contract: contractDepth(name, collectorId),
@@ -109,7 +122,11 @@ export function buildFleet(input: FleetInput, nowMs = Date.now()): FleetEntry[] 
         .map((j) => ({ job_id: j.job_id, verdict: j.verdict, ts: j.finished ?? j.seen })),
       failed24h: mine.filter((j) => isFailure(j.verdict) && (j.finished ?? j.seen) >= since).length,
       ...(schedule ? { expectedEveryMs: schedule.medianGapMs } : {}),
-      ...(schedule ? { stale: isStale(schedule, cursor.last_job_finish_ms, nowMs) } : {}),
+      // A paused scraper is not late, it is switched off. Claiming otherwise
+      // would page someone about a decision they made on purpose.
+      ...(schedule && cursor.platform_active !== false
+        ? { stale: isStale(schedule, cursor.last_job_finish_ms, nowMs) }
+        : {}),
     };
   });
 }

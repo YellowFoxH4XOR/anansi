@@ -846,3 +846,24 @@ describe("the job window survives the platform's undocumented date timezone", ()
     expect(second.jobs_handled).toBe(0);
   });
 });
+
+describe("the platform's own name reaches the console", () => {
+  it("records it on every poll, so a rename in Studio propagates", async () => {
+    const api = new FakeApi([{ id: COLLECTOR, name: "anansi-lab", active: true }], { [COLLECTOR]: [] });
+    const monitor = monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]) });
+    await monitor.pollOnce();
+    expect(store.monitorCursor(contract.scraper)).toMatchObject({ platform_name: "anansi-lab", platform_active: true });
+
+    // Renamed in Studio. Discovery is cached, so age the cache past its refresh.
+    (api as unknown as { collectorList: Collector[] }).collectorList = [{ id: COLLECTOR, name: "lab-renamed", active: false }];
+    clock += 10 * 60_000;
+    await monitor.pollOnce();
+    expect(store.monitorCursor(contract.scraper)).toMatchObject({ platform_name: "lab-renamed", platform_active: false });
+  });
+
+  it("does not invent one when the platform gives none", async () => {
+    const api = new FakeApi([{ id: "c_nameless" }], { c_nameless: [] });
+    await monitorWith(api).pollOnce();
+    expect(store.monitorCursor("c_nameless").platform_name).toBeUndefined();
+  });
+});
