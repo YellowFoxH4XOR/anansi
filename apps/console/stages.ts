@@ -3,7 +3,7 @@
 //
 // Every string here is derived from the incident record and its audit events.
 // A hardcoded "2 failed heals" previously appeared under any quarantine -
-// including quarantines where no heal ran and no credits were spent - which
+// including quarantines where no heal ran and nothing was spent - which
 // made the console misreport the very run it exists to explain.
 
 import type { GateResult, IncidentRecord } from "../../packages/core/types.js";
@@ -27,9 +27,9 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
     // previously rendered as "infra".
     const why: Record<string, string> = {
       infra: "access problem — healing refused (ADR-003: blocked is never healed)",
-      dead: "URL is gone — not healed, not retried, no credits spent",
+      dead: "URL is gone — not healed, not retried, no heal spend",
       config: "our scraper/output-schema is at fault — selectors cannot repair it",
-      retry: "transient platform noise — retried on the next cadence tick",
+      retry: "transient platform noise — Bright Data's next scheduled run is the retry",
     };
     stages.push({
       name: `TRIAGE — ${rec.route} lane`,
@@ -43,9 +43,9 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
   // Attempts are counted from what actually happened, never assumed.
   const attempts = Math.max(healStarts.length, rec.heal_attempts.length);
   // driveIncident quarantines before diagnosing when it has no last-good
-  // snapshot to diff against, which is the normal state of a collector that has
-  // not yet recorded one healthy sweep. That is a different outcome from a heal
-  // that was tried and rejected, and must not be reported as one.
+  // snapshot to diff against, which is the normal state of a collector whose
+  // archive holds nothing yet. That is a different outcome from a heal that was
+  // tried and rejected, and must not be reported as one.
   const noBaseline = !open && attempts === 0 && rec.last_good_ref == null;
   stages.push({
     name: "2 · DIAGNOSE",
@@ -53,7 +53,7 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
     meta: rec.prompt
       ? `auto-generated heal prompt (${rec.prompt.length} chars): "${rec.prompt}"`
       : noBaseline
-        ? "no last-good snapshot to diff against — diagnosis cannot run until one healthy sweep is on record"
+        ? "no last-good snapshot to diff against — diagnosis cannot run until one clean run has been archived"
         : open
           ? "building evidence pack…"
           : "diagnosis did not complete",
@@ -78,31 +78,35 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
   });
 
   const approved = by("approved").length > 0;
-  const v2 = last("verify_v2");
+  // A collector with no contract cannot be gated by V1, so its fix is left
+  // sitting on the platform for a human instead of being promoted.
+  const awaitingHuman = by("awaiting_human_approval").length > 0;
   const failedHeals = rec.heal_attempts.filter((a) => a.verdict?.pass === false).length;
   stages.push({
     name: "5 · PROMOTE (scraper approve)",
-    status: approved ? "done" : rec.resolution === "quarantined" ? "fail" : open ? "pending" : "fail",
+    status: approved ? "done" : awaitingHuman ? "live" : rec.resolution === "quarantined" ? "fail" : open ? "pending" : "fail",
     meta: approved
       ? "gate passed — fix promoted to production"
-      : rec.resolution === "quarantined"
-        ? failedHeals > 0
-          ? `${failedHeals} failed heal${failedHeals === 1 ? "" : "s"} — rejected pending fix, human paged`
-          : `quarantined without a heal being attempted · ${rec.credits_spent} credit(s) spent — human paged`
-        : open
-          ? "awaiting the V1 gate"
-          : "blocked on V1",
+      : awaitingHuman
+        ? "V1 passed but no contract pins this collector — fix left awaiting_approval for a human"
+        : rec.resolution === "quarantined"
+          ? failedHeals > 0
+            ? `${failedHeals} failed heal${failedHeals === 1 ? "" : "s"} — rejected pending fix, human paged`
+            : `quarantined without a heal being attempted · ${rec.credits_spent} heal attempt(s) — human paged`
+          : open
+            ? "awaiting the V1 gate"
+            : "blocked on V1",
   });
 
+  // The old sixth stage re-collected every canary after promotion. ANANSI no
+  // longer triggers collections, so the verification is Bright Data's own next
+  // scheduled run (ADR-005) — the console waits for it rather than causing it.
   stages.push({
-    name: "VERIFY V2 — full canary sweep post-approval",
-    status: v2 ? ((v2.pass as boolean) ? "done" : "fail") : approved && open ? "live" : "pending",
-    meta: v2
-      ? (v2.pass as boolean)
-        ? `sweep clean · incident closed · collector watching${(v2.repin_flags as unknown[])?.length ? " · ⚑ golden re-pin flagged for human" : ""}`
-        : "REGRESSION — roll back via the dashboard Versions menu (no CLI rollback exists), collector quarantined"
-      : "runs after promotion",
-    gates: (v2?.gates as GateResult[] | undefined) ?? undefined,
+    name: "6 · AWAITING THE NEXT SCHEDULED RUN",
+    status: approved ? "live" : "pending",
+    meta: approved
+      ? "promoted — Bright Data's next scheduled run verifies the fix; a failure on it quarantines the collector instead of re-healing"
+      : "runs after promotion — ANANSI never triggers one",
   });
 
   return stages;

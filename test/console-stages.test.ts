@@ -47,9 +47,9 @@ describe("console stage view-model", () => {
       last_good_ref: "ref",
       prompt: "fix the price selector",
       heal_attempts: [
-        { prompt: "p", diff_summary: "", verdict: { pass: false }, phase: "v1", ts: 1 },
-        { prompt: "p", diff_summary: "", verdict: { pass: false }, phase: "v1", ts: 2 },
-        { prompt: "p", diff_summary: "", verdict: { pass: false }, phase: "v1", ts: 3 },
+        { prompt: "p", diff_summary: "", verdict: { pass: false }, ts: 1 },
+        { prompt: "p", diff_summary: "", verdict: { pass: false }, ts: 2 },
+        { prompt: "p", diff_summary: "", verdict: { pass: false }, ts: 3 },
       ],
     } as Partial<IncidentRecord>);
     // Three attempts must not render as the old hardcoded two.
@@ -60,7 +60,7 @@ describe("console stage view-model", () => {
     const rec = incident({
       resolution: "quarantined",
       last_good_ref: "ref",
-      heal_attempts: [{ prompt: "p", diff_summary: "", verdict: { pass: false }, phase: "v1", ts: 1 }],
+      heal_attempts: [{ prompt: "p", diff_summary: "", verdict: { pass: false }, ts: 1 }],
     } as Partial<IncidentRecord>);
     const meta = stage(stagesFor(rec, []), "5 ·").meta;
     expect(meta).toContain("1 failed heal ");
@@ -85,5 +85,46 @@ describe("console stage view-model", () => {
       { event: "heal_start", id: "test" },
     ]);
     expect(stage(stages, "3 ·").meta).toContain("2 attempt(s)");
+  });
+
+  it("ends the trace at the next scheduled run, not at a post-approval sweep", () => {
+    // V2 re-collected every canary after promotion, which meant ANANSI
+    // triggering a collection. That is gone (ADR-005): the verification is
+    // Bright Data's own next run, so the last stage waits rather than acts.
+    const stages = stagesFor(incident({ prompt: "p", resolution: "promoted" }), [{ event: "approved", id: "test" }]);
+
+    expect(stages.some((s) => s.name.includes("V2"))).toBe(false);
+    const last = stages[stages.length - 1]!;
+    expect(last.name).toContain("AWAITING THE NEXT SCHEDULED RUN");
+    expect(last.meta).toContain("next scheduled run");
+    expect(last.status).toBe("live");
+  });
+
+  it("never claims a golden re-pin, which only the deleted V2 could flag", () => {
+    const stages = stagesFor(incident({ prompt: "p", resolution: "promoted" }), [
+      { event: "approved", id: "test" },
+      // A legacy store still holds these events. They must not resurrect the stage.
+      { event: "verify_v2", id: "test", pass: true, repin_flags: [{ field: "price" }] },
+    ]);
+    const text = stages.map((s) => `${s.name} ${s.meta}`).join(" ");
+    expect(text).not.toContain("re-pin");
+    expect(text).not.toContain("sweep");
+  });
+
+  it("says a contract-less collector's fix is parked for a human", () => {
+    // Without goldens V1 cannot gate, so driveIncident leaves the fix
+    // awaiting_approval on the platform. Stage 5 must not read as "blocked".
+    const stages = stagesFor(incident({ prompt: "p" }), [{ event: "awaiting_human_approval", id: "test", attempt: 1 }]);
+    const promote = stage(stages, "5 ·");
+    expect(promote.status).toBe("live");
+    expect(promote.meta).toContain("awaiting_approval");
+    expect(promote.meta).toContain("human");
+  });
+
+  it("does not promise a retry it cannot perform", () => {
+    // Nothing in ANANSI retries: the next run is Bright Data's to schedule.
+    const meta = stage(stagesFor(incident({ route: "retry" }), []), "TRIAGE").meta;
+    expect(meta).not.toContain("cadence");
+    expect(meta).toContain("next scheduled run");
   });
 });

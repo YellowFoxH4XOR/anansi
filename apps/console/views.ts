@@ -3,6 +3,8 @@
 // audit event count changes.
 
 import type { CollectorState, GateResult, IncidentRecord } from "../../packages/core/types.js";
+import type { FleetEntry } from "./fleet.js";
+import { isFailure, type JobRow } from "./jobs.js";
 
 const esc = (s: string) =>
   s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -82,19 +84,58 @@ ${refreshScript}
 </html>`;
 }
 
-export function fleetStrip(fleet: { name: string; state: CollectorState; lastChecked?: number }[]): string {
+export function fleetStrip(fleet: FleetEntry[]): string {
   const chips = fleet
-    .map(
-      (f) =>
-        `<span class="chip"><span class="dot" style="background:${STATE_COLORS[f.state]}"></span>${esc(f.name)} · ${f.state}${
-          f.lastChecked ? ` · ${new Date(f.lastChecked).toLocaleTimeString()}` : ""
-        }</span>`,
-    )
+    .map((f) => {
+      // The platform id is the identity; a store key equal to it means no
+      // contract names this collector, so it is monitored for platform
+      // failures only.
+      const depth = f.contract === "none" ? " · platform only" : f.contract === "pinned" ? " · contract" : "";
+      const run = f.lastRunAt ? ` · ran ${new Date(f.lastRunAt).toLocaleTimeString()}` : "";
+      // A run that never happened leaves no job and no error, so the strip is
+      // the only place it can surface at all.
+      const overdue = f.stale ? " · OVERDUE" : "";
+      return `<span class="chip" title="${esc(f.collectorId ?? f.name)}"><span class="dot" style="background:${STATE_COLORS[f.state]}"></span>${esc(f.name)} · ${f.state}${depth}${run}${overdue}</span>`;
+    })
     .join("");
   return `<span class="fleet">${chips}</span>`;
 }
 
-export function indexPage(incidents: IncidentRecord[], creditsSpent: number): string {
+const VERDICT_COLOR: Record<string, string> = {
+  ok: "var(--good)",
+  partial: "var(--bad)",
+  failed: "var(--bad)",
+  unknown: "var(--muted)",
+  seeded: "var(--muted)",
+  in_flight: "var(--accent)",
+  deferred: "var(--muted)",
+  abandoned: "var(--muted)",
+};
+
+function runTable(jobs: JobRow[]): string {
+  const rows = jobs
+    .map(
+      (j) => `<tr>
+  <td><span class="pill" style="border:1px solid ${VERDICT_COLOR[j.verdict] ?? "var(--muted)"};color:${VERDICT_COLOR[j.verdict] ?? "var(--muted)"}">${j.verdict}</span></td>
+  <td>${esc(j.job_id)}</td>
+  <td>${esc(j.collector)}</td>
+  <td>${j.trigger}</td>
+  <td>${j.rows}</td>
+  <td>${j.error_rows}</td>
+  <td>${new Date(j.finished ?? j.seen).toLocaleString()}</td>
+</tr>`,
+    )
+    .join("\n");
+  return `<div class="panel">
+<div style="color:var(--muted);font-size:.8rem;margin-bottom:.5rem">Runs Bright Data performed on its own schedule, as observed by ANANSI — it never triggers a collection.</div>
+<table class="inc">
+<tr><th>verdict</th><th>job</th><th>collector</th><th>trigger</th><th>rows</th><th>row errors</th><th>run finished</th></tr>
+${rows || `<tr><td colspan="7" style="color:var(--muted)">No runs observed yet — either no collector has run inside the platform's retention window, or the agent has not completed a poll.</td></tr>`}
+</table>
+</div>`;
+}
+
+export function indexPage(incidents: IncidentRecord[], healAttempts: number, jobs: JobRow[] = []): string {
   const rows = incidents
     .slice()
     .reverse()
@@ -117,14 +158,16 @@ export function indexPage(incidents: IncidentRecord[], creditsSpent: number): st
   <span>incidents <b>${incidents.length}</b></span>
   <span>promoted by gate <b>${incidents.filter((r) => r.resolution === "promoted").length}</b></span>
   <span>quarantined <b>${incidents.filter((r) => r.resolution === "quarantined").length}</b></span>
-  <span>credits spent <b>${creditsSpent}</b></span>
+  <span title="A heal is the only thing ANANSI can spend on: polling and archiving are free.">heal attempts <b>${healAttempts}</b></span>
+  <span title="Runs that failed or partially failed in the last 24h.">failed runs · 24h <b>${jobs.filter((j) => isFailure(j.verdict) && (j.finished ?? j.seen) >= Date.now() - 86_400_000).length}</b></span>
 </div>
 <div class="panel">
 <table class="inc">
-<tr><th>id</th><th>scraper</th><th>signals</th><th>route</th><th>resolution</th><th>credits</th><th>wall</th><th>opened</th></tr>
-${rows || `<tr><td colspan="8" style="color:var(--muted)">No incidents yet — the fleet is healthy. Fire a mutation from the Lab control panel.</td></tr>`}
+<tr><th>id</th><th>scraper</th><th>signals</th><th>route</th><th>resolution</th><th>heals</th><th>wall</th><th>opened</th></tr>
+${rows || `<tr><td colspan="8" style="color:var(--muted)">No incidents yet — every run Bright Data has performed so far came back clean.</td></tr>`}
 </table>
-</div>`;
+</div>
+${runTable(jobs)}`;
 }
 
 type StageView = {
@@ -177,7 +220,7 @@ setInterval(async () => {
 <div class="kpis">
   <span>route <b>${rec.route}</b></span>
   <span>resolution <b>${rec.resolution ?? "open"}</b></span>
-  <span>credits <b>${rec.credits_spent}</b></span>
+  <span title="Heal attempts — the only spend ANANSI initiates. Polling and archiving are free.">heals <b>${rec.credits_spent}</b></span>
   <span>wall <b>${rec.wall_ms ? `${Math.round(rec.wall_ms / 1000)}s` : "running"}</b></span>
   <span>approved by <b>${rec.approved_by ?? "—"}</b></span>
 </div>

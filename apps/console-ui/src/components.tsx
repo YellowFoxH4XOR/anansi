@@ -1,13 +1,24 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { CollectorState, GateResult, Verdict } from "./api";
+import type { CollectorState, ContractDepth, GateResult, JobVerdict, RunTick, Verdict } from "./api";
 
-export const STATE_META: Record<CollectorState, { color: string; glyph: string }> = {
-  healthy: { color: "var(--good)", glyph: "●" },
-  watching: { color: "var(--good)", glyph: "◉" },
-  incident_open: { color: "var(--warn)", glyph: "▲" },
-  healing: { color: "var(--accent)", glyph: "◔" },
-  verifying: { color: "var(--accent)", glyph: "◑" },
-  quarantined: { color: "var(--bad)", glyph: "✕" },
+// What each state means now that Bright Data owns the schedule: every one of
+// them is a statement about runs the platform performed, never about a scan of
+// ours.
+export const STATE_META: Record<CollectorState, { color: string; glyph: string; title: string }> = {
+  healthy: { color: "var(--good)", glyph: "●", title: "The last run observed for this collector came back clean." },
+  watching: {
+    color: "var(--good)",
+    glyph: "◉",
+    title: "A fix was promoted. Bright Data's next scheduled run is the verification — if it fails, the collector is quarantined rather than re-healed.",
+  },
+  incident_open: { color: "var(--warn)", glyph: "▲", title: "An incident is open. Further runs are held until it resolves." },
+  healing: { color: "var(--accent)", glyph: "◔", title: "A heal is in flight in Scraper Studio, stopping at the approval gate." },
+  verifying: {
+    color: "var(--accent)",
+    glyph: "◑",
+    title: "Legacy state. Post-approval verification is now Bright Data's own next scheduled run, so nothing sets this any more — it renders only for incidents recorded before that change.",
+  },
+  quarantined: { color: "var(--bad)", glyph: "✕", title: "Human attention required. ANANSI will not attempt another heal here." },
 };
 
 export function StatePill({ state }: { state: CollectorState }) {
@@ -17,12 +28,94 @@ export function StatePill({ state }: { state: CollectorState }) {
     <span
       className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] tracking-wide"
       style={{ borderColor: m.color, color: m.color }}
+      title={m.title}
     >
       <span className={live ? "pulse" : ""}>{m.glyph}</span>
       {state}
     </span>
   );
 }
+
+// A run's outcome as the platform reported it, plus the two verdicts that are
+// about ANANSI rather than the scraper (deferred, in_flight) — kept visually
+// distinct so our own backlog is never read as the scraper failing.
+export const VERDICT_META: Record<JobVerdict, { color: string; glyph: string; label: string; title: string }> = {
+  ok: { color: "var(--good)", glyph: "✓", label: "ok", title: "Run completed with no failed pages and no row errors." },
+  partial: { color: "var(--bad)", glyph: "◑", label: "partial", title: "Rows landed, but some pages failed — a real failure with partial data." },
+  failed: { color: "var(--bad)", glyph: "✕", label: "failed", title: "The run failed: failed pages, row errors, or a failed status." },
+  unknown: {
+    color: "var(--warn)",
+    glyph: "?",
+    label: "unknown",
+    title: "The platform reported no usable signal. Status alone is never trusted — a live job has been seen with no status at all and 15 failed pages.",
+  },
+  seeded: {
+    color: "var(--muted)",
+    glyph: "○",
+    label: "seeded",
+    title: "Already finished before ANANSI started watching this collector. Recorded, deliberately not judged: healing against a two-week-old page is worse than not healing.",
+  },
+  in_flight: { color: "var(--accent)", glyph: "●", label: "in flight", title: "Claimed by the monitor and not yet settled." },
+  deferred: { color: "var(--warn)", glyph: "⏸", label: "deferred", title: "Held by ANANSI, not dropped — a job is a one-time fact, so it is re-offered on a later poll." },
+  abandoned: { color: "var(--muted)", glyph: "⊘", label: "abandoned", title: "The monitor died while handling this job. Not replayed: a replay could approve an ungated fix." },
+};
+
+export function RunVerdict({ verdict }: { verdict: JobVerdict }) {
+  const m = VERDICT_META[verdict];
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: m.color }} title={m.title}>
+      <span aria-hidden>{m.glyph}</span>
+      {m.label}
+    </span>
+  );
+}
+
+// Run-outcome strip: the contract-free equivalent of a golden sparkline. Every
+// collector has one, because every collector has runs; only some have goldens.
+export function RunStrip({ ticks, height = 56 }: { ticks: RunTick[]; height?: number }) {
+  if (ticks.length === 0) {
+    return (
+      <div className="flex items-center text-[11px]" style={{ color: "var(--muted)", height }}>
+        no runs observed yet
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1" style={{ minHeight: height }}>
+      {ticks.map((t) => {
+        const m = VERDICT_META[t.verdict];
+        return (
+          <span
+            key={t.job_id}
+            className="text-[13px] leading-none"
+            style={{ color: m.color }}
+            title={`${t.job_id} · ${m.label} · ${new Date(t.ts).toLocaleString()}`}
+          >
+            {m.glyph}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// The one place the console sells the deeper tier: a contract is optional, and
+// its absence must read as "less checking", never as "broken".
+export const DEPTH_META: Record<ContractDepth, { label: string; title: string }> = {
+  pinned: {
+    label: "contract · goldens",
+    title: "A contract pins this collector: ANANSI checks golden values, CUSUM drift and invariants on top of platform failures.",
+  },
+  none: {
+    label: "platform signals only",
+    title:
+      "No contract on file. ANANSI reports run failures for this scraper but cannot check goldens, CUSUM drift or invariants. Add a contract naming this collector_id to get them.",
+  },
+  unknown: {
+    label: "depth unknown",
+    title: "The agent has not recorded discovering this collector, so the console cannot tell whether a contract pins it.",
+  },
+};
 
 export function resolutionMeta(resolution?: string): { color: string; glyph: string; word: string } {
   if (resolution === "promoted") return { color: "var(--good)", glyph: "✓", word: "promoted" };
@@ -135,9 +228,9 @@ export function Skeleton({ lines = 3, label = "loading" }: { lines?: number; lab
   );
 }
 
-export function Kpi({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
+export function Kpi({ label, value, tone, title }: { label: string; value: string | number; tone?: string; title?: string }) {
   return (
-    <div className="overflow-hidden rounded-xl border" style={{ borderColor: "var(--line)", background: "var(--panel)" }}>
+    <div className="overflow-hidden rounded-xl border" title={title} style={{ borderColor: "var(--line)", background: "var(--panel)" }}>
       <div aria-hidden style={{ height: 2, background: tone ?? "var(--line)" }} />
       <div className="px-4 pb-3 pt-2.5">
         <div className="num text-[22px] font-bold leading-7" style={{ color: tone ?? "var(--ink)" }}>
@@ -174,7 +267,7 @@ export function GateList({ gates }: { gates: GateResult[] }) {
 // tooltip on the nearest point, min/max end labels (a single steady label when
 // the series is flat, drawn at vertical center). No axes/grid — it lives
 // inside a fleet card whose caption names the series; width tracks the card.
-export function Sparkline({ points, height = 56 }: { points: { ts: number; v: number }[]; height?: number }) {
+export function Sparkline({ points, label = "value", height = 56 }: { points: { ts: number; v: number }[]; label?: string; height?: number }) {
   const [hover, setHover] = useState<number | null>(null);
   const [width, setWidth] = useState(216);
   const ro = useRef<ResizeObserver | null>(null);
@@ -207,7 +300,7 @@ export function Sparkline({ points, height = 56 }: { points: { ts: number; v: nu
   if (!geom) {
     return (
       <div className="flex items-center text-[11px]" style={{ color: "var(--muted)", height }}>
-        no run history yet
+        not enough numeric history yet
       </div>
     );
   }
@@ -223,8 +316,8 @@ export function Sparkline({ points, height = 56 }: { points: { ts: number; v: nu
           role="img"
           aria-label={
             geom.flat
-              ? `price steady at ${last.v} over the last ${points.length} runs`
-              : `price over the last ${points.length} runs, latest ${last.v}, min ${geom.lo}, max ${geom.hi}`
+              ? `${label} steady at ${last.v} over the last ${points.length} runs`
+              : `${label} over the last ${points.length} runs, latest ${last.v}, min ${geom.lo}, max ${geom.hi}`
           }
           onMouseMove={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();

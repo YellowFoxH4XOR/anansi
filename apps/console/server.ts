@@ -1,16 +1,23 @@
 // Console server: JSON API over the store + the React SPA (console-ui/dist)
 // when it's been built, falling back to the original server-rendered views
 // when it hasn't — so the demo path never depends on a frontend build.
+//
+// Strictly a reader. The console holds no BRIGHTDATA_API_KEY and imports no
+// platform client: the agent is the only process that talks to Bright Data,
+// and the two meet on a shared data volume. Everything below is derived from
+// what the agent wrote there.
 
 import express from "express";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Store } from "../../packages/adapters/store/index.js";
-import type { CollectorState, IncidentRecord } from "../../packages/core/types.js";
+import type { IncidentRecord } from "../../packages/core/types.js";
 import { normalizeHtml } from "../../packages/core/diagnose/normalize.js";
 import type { EvidencePack } from "../../packages/core/diagnose/evidence.js";
 import { diffPage, fleetStrip, indexPage, layout, tracePage, type Page } from "./views.js";
 import { stagesFor } from "./stages.js";
+import { readFleet, readJobs, readLastPoll } from "./read.js";
+import { failuresSince } from "./jobs.js";
 
 const store = new Store(process.env.ANANSI_DATA ?? "data");
 await store.init();
@@ -18,25 +25,8 @@ const app = express();
 
 // ---------------------------------------------------------------- shared bits
 
-function fleet(): { name: string; state: CollectorState; lastChecked?: number }[] {
-  return Object.entries(store.collectors()).map(([name, state]) => {
-    const runs = store.runs(name);
-    return { name, state, lastChecked: runs[runs.length - 1]?.ts };
-  });
-}
-
-// A healthy fleet produces no incidents, so without this the console cannot
-// distinguish "scanning and finding nothing wrong" from "agent is dead".
-function lastSweep(): { scraper: string; sweep_ts: number; healthy: boolean; canaries: number } | null {
-  let newest: { scraper: string; sweep_ts: number; healthy: boolean; canaries: number } | null = null;
-  for (const name of Object.keys(store.collectors())) {
-    const s = store.sweeps(name, 1)[0];
-    if (s && (!newest || s.sweep_ts > newest.sweep_ts)) {
-      newest = { scraper: name, sweep_ts: s.sweep_ts, healthy: s.healthy, canaries: s.canaries };
-    }
-  }
-  return newest;
-}
+const allJobs = () => readJobs(store);
+const fleet = (jobs = allJobs()) => readFleet(store, jobs);
 
 function incidentEvents(id: string): Record<string, unknown>[] {
   return store.auditLog().filter((e) => e.id === id);
@@ -65,27 +55,35 @@ async function diffPayload(rec: IncidentRecord) {
 
 // ------------------------------------------------------------------- JSON API
 
-// Which adapter the agent is running. Surfaced so a rehearsal run (simulated
-// heals, no credits) can never be read as a live platform run — the header
-// badge and the SIMULATED stamp on every diff_summary say so together.
+// Which HEAL adapter the agent is running. Monitoring is read-only in every
+// mode; this only says whether a fix would really be issued to Scraper Studio,
+// so a fixture run can never be read as a live promotion.
 const mode = process.env.ANANSI_MODE ?? process.env.ANANSI_ADAPTER ?? "real";
 
+const DAY_MS = 24 * 60 * 60_000;
+
 app.get("/api/state", (_req, res) => {
+  const jobs = allJobs();
   res.json({
-    fleet: fleet(),
-    creditsSpent: store.creditsSpent(),
+    fleet: fleet(jobs),
+    // Renamed from creditsSpent: ANANSI causes no page loads, so the only
+    // spend it can still initiate is a heal.
+    healAttempts: store.creditsSpent(),
     incidents: store.incidents(),
     mode,
-    lastSweep: lastSweep(),
+    lastPoll: readLastPoll(store),
+    failedRuns24h: failuresSince(jobs, Date.now() - DAY_MS),
   });
 });
 
-app.get("/api/sweeps", (req, res) => {
-  const limit = Math.min(Number(req.query.limit ?? 50), 200);
-  const names = req.query.scraper ? [String(req.query.scraper)] : Object.keys(store.collectors());
-  const rows = names.flatMap((name) => store.sweeps(name, limit).map((s) => ({ scraper: name, ...s })));
-  // Newest first: the answer to "did it just scan?" should be the top row.
-  rows.sort((a, b) => b.sweep_ts - a.sweep_ts);
+// Bright Data's job history as ANANSI observed it. Never a list of things
+// ANANSI did — it triggers nothing.
+app.get("/api/jobs", (req, res) => {
+  const limit = Math.min(Number(req.query.limit ?? 100), 200);
+  const collector = req.query.collector ? String(req.query.collector) : undefined;
+  const verdict = req.query.verdict ? String(req.query.verdict) : undefined;
+  let rows = readJobs(store, collector);
+  if (verdict) rows = rows.filter((r) => r.verdict === verdict);
   res.json(rows.slice(0, limit));
 });
 
@@ -134,7 +132,7 @@ if (existsSync(resolve(dist, "index.html"))) {
   };
 
   app.get("/", (_req, res) => {
-    render(res, "Fleet", indexPage(store.incidents(), store.creditsSpent()));
+    render(res, "Fleet", indexPage(store.incidents(), store.creditsSpent(), allJobs().slice(0, 20)));
   });
 
   app.get("/incident/:id", async (req, res) => {

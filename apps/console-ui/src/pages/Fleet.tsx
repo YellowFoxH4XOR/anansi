@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { fetchRuns, usePoll, type IncidentRecord, type RunPoint, type StatePayload } from "../api";
-import { Chip, Kpi, Panel, ResolutionPill, RouteBadge, STATE_META, Skeleton, Sparkline, StatePill, ago } from "../components";
+import { fetchRuns, usePoll, type FleetEntry, type IncidentRecord, type RunPoint, type StatePayload } from "../api";
+import {
+  Chip,
+  DEPTH_META,
+  Kpi,
+  Panel,
+  ResolutionPill,
+  RouteBadge,
+  RunStrip,
+  STATE_META,
+  Skeleton,
+  Sparkline,
+  StatePill,
+  ago,
+} from "../components";
 
 function CommandLine({ cmd }: { cmd: string }) {
   return (
@@ -17,17 +30,33 @@ function CommandLine({ cmd }: { cmd: string }) {
   );
 }
 
-function FleetCard({
-  name,
-  state,
-  lastChecked,
-  openIncident,
-}: {
-  name: string;
-  state: StatePayload["fleet"][number]["state"];
-  lastChecked?: number;
-  openIncident?: IncidentRecord;
-}) {
+/** The first field this collector actually reports as a number, on its first
+ *  URL. Previously hardcoded to `price`, which was contract-fleet thinking: on
+ *  any scraper that is not a storefront it left the chart permanently blank. */
+function firstNumericSeries(runs: RunPoint[]): { field: string; url: string; points: { ts: number; v: number }[] } | null {
+  const url = runs[0]?.url;
+  if (!url) return null;
+  const forUrl = runs.filter((r) => r.url === url);
+  const field = forUrl
+    .flatMap((r) => Object.entries(r.fields))
+    .find(([, v]) => typeof v === "number")?.[0];
+  if (!field) return null;
+  const points = forUrl.flatMap((r) => (typeof r.fields[field] === "number" ? [{ ts: r.ts, v: r.fields[field] as number }] : []));
+  return points.length >= 2 ? { field, url, points } : null;
+}
+
+/** Cadence in the coarsest unit that still reads true — an inferred median is
+ *  not precise enough to deserve minutes-and-seconds. */
+function humanGap(ms: number | undefined): string {
+  if (!ms) return "—";
+  const h = ms / 3_600_000;
+  if (h >= 48) return `${Math.round(h / 24)}d`;
+  if (h >= 1.5) return `${Math.round(h)}h`;
+  return `${Math.max(1, Math.round(ms / 60_000))}m`;
+}
+
+function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: IncidentRecord }) {
+  const { name, state, collectorId, contract, recent, lastRunAt, failed24h, stale, expectedEveryMs } = entry;
   const [runs, setRuns] = useState<RunPoint[]>([]);
   useEffect(() => {
     fetchRuns(name).then(setRuns).catch(() => {});
@@ -35,26 +64,63 @@ function FleetCard({
     return () => clearInterval(t);
   }, [name]);
 
-  // One golden-tracked metric per card: the first canary's price series.
-  const firstUrl = runs[0]?.url;
-  const points = runs
-    .filter((r) => r.url === firstUrl && typeof r.fields.price === "number")
-    .map((r) => ({ ts: r.ts, v: r.fields.price as number }));
+  // A golden chart needs a contract; the run strip needs only runs. Every card
+  // gets the strip, so a contract-less collector is never a blank card.
+  const series = contract === "pinned" ? firstNumericSeries(runs) : null;
+  const depth = DEPTH_META[contract];
 
   return (
-    <Panel
-      className="fade-in flex flex-col gap-2"
-      style={{ borderLeft: `3px solid ${STATE_META[state].color}` }}
-    >
+    <Panel className="fade-in flex flex-col gap-2" style={{ borderLeft: `3px solid ${STATE_META[state].color}` }}>
       <div className="flex items-center justify-between gap-3">
-        <span className="font-bold">{name}</span>
+        <span className="min-w-0 truncate font-bold" title={name}>
+          {name}
+        </span>
         <StatePill state={state} />
       </div>
-      <Sparkline points={points.slice(-24)} />
-      <div className="flex justify-between text-[11px]" style={{ color: "var(--muted)" }}>
-        <span>price · canary #1</span>
-        <span title={lastChecked ? new Date(lastChecked).toLocaleString() : undefined}>checked {ago(lastChecked)}</span>
+      {collectorId && collectorId !== name && (
+        <span className="num truncate text-[10.5px]" style={{ color: "var(--muted)" }} title={collectorId}>
+          {collectorId}
+        </span>
+      )}
+      {series ? (
+        <>
+          <Sparkline points={series.points.slice(-24)} label={series.field} />
+          <div className="flex justify-between text-[11px]" style={{ color: "var(--muted)" }}>
+            <span title={series.url}>{series.field} · pinned field</span>
+            <span title={lastRunAt ? new Date(lastRunAt).toLocaleString() : undefined}>last run {ago(lastRunAt)}</span>
+          </div>
+        </>
+      ) : (
+        <>
+          <RunStrip ticks={recent} />
+          <div className="flex justify-between text-[11px]" style={{ color: "var(--muted)" }}>
+            <span title="Outcome of each run Bright Data performed, oldest first.">last {recent.length} run(s)</span>
+            <span title={lastRunAt ? new Date(lastRunAt).toLocaleString() : undefined}>last run {ago(lastRunAt)}</span>
+          </div>
+        </>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip title={depth.title}>{depth.label}</Chip>
+        {failed24h > 0 && (
+          <Chip color="var(--bad)" border="var(--bad)" title="Runs that failed or partly failed in the last 24h.">
+            ✕ {failed24h} failed · 24h
+          </Chip>
+        )}
+        {stale && (
+          <Chip
+            color="var(--warn)"
+            border="var(--warn)"
+            title={`Bright Data has run this roughly every ${humanGap(expectedEveryMs)}, learned from its own run history — and the last one finished longer ago than that. A run that never happens produces no job and no error, so nothing else here would mention it. ANANSI cannot start one: check the schedule in Scraper Studio.`}
+          >
+            ⏳ overdue · expected every {humanGap(expectedEveryMs)}
+          </Chip>
+        )}
       </div>
+      {contract === "none" && (
+        <span className="text-[11px]" style={{ color: "var(--muted)" }}>
+          Add a contract naming this collector_id to check field values as well as run failures.
+        </span>
+      )}
       {openIncident && (
         <Link
           to={`/incident/${openIncident.id}`}
@@ -77,7 +143,7 @@ export default function Fleet() {
   if (!state) {
     return <Skeleton lines={3} label="connecting to the store" />;
   }
-  const { fleet, incidents, creditsSpent } = state;
+  const { fleet, incidents, healAttempts } = state;
   const promoted = incidents.filter((i) => i.resolution === "promoted").length;
   const quarantined = incidents.filter((i) => i.resolution === "quarantined").length;
   const open = incidents.filter((i) => i.resolution == null).length;
@@ -90,18 +156,32 @@ export default function Fleet() {
         <Kpi label="open now" value={open} tone={open ? "var(--accent)" : undefined} />
         <Kpi label="promoted by gate" value={promoted} tone="var(--good)" />
         <Kpi label="quarantined" value={quarantined} tone={quarantined ? "var(--bad)" : undefined} />
-        <Kpi label="credits spent" value={creditsSpent} />
+        <Kpi
+          label="heal attempts"
+          value={healAttempts}
+          title="Heals ANANSI has issued. A heal runs the scraper to produce preview rows, so it is the only spend ANANSI causes: it never triggers a collection, and polling and archiving are free."
+        />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {fleet.length === 0 && (
           <Panel className="sm:col-span-2 lg:col-span-3">
-            <span style={{ color: "var(--muted)" }}>No collectors yet — seed the demo fleet:</span>
+            <div className="font-bold">No scrapers discovered yet</div>
+            <p className="mt-2 text-[12.5px]" style={{ color: "var(--muted)" }}>
+              ANANSI reads the fleet from Bright Data, so a scraper built in Scraper Studio appears here with no config
+              file and no redeploy. An empty board means either the agent has not completed a poll (check it is running
+              and that <code className="mx-1">BRIGHTDATA_API_KEY</code> can read <code>/dca/collector/jobs</code>), or
+              the account has no collectors. The console only reads the shared volume — it never calls the platform, so
+              it cannot tell those two apart. The agent log can.
+            </p>
+            <p className="mt-2 text-[12.5px]" style={{ color: "var(--muted)" }}>
+              For an offline demo fleet with a full incident already on record:
+            </p>
             <CommandLine cmd="npx tsx scripts/seed-demo.ts" />
           </Panel>
         )}
         {fleet.map((f) => (
-          <FleetCard key={f.name} {...f} openIncident={openFor(f.name)} />
+          <FleetCard key={f.name} entry={f} openIncident={openFor(f.name)} />
         ))}
       </div>
 
@@ -109,7 +189,7 @@ export default function Fleet() {
         <table className="num w-full text-[13px]">
           <thead>
             <tr className="text-left text-[10.5px] uppercase tracking-widest" style={{ color: "var(--muted)" }}>
-              {["incident", "scraper", "signals", "route", "resolution", "credits", "wall", "opened"].map((h) => (
+              {["incident", "scraper", "signals", "route", "resolution", "heals", "wall", "opened"].map((h) => (
                 <th key={h} className="border-b px-4 py-2 font-medium" style={{ borderColor: "var(--line)" }}>
                   {h}
                 </th>
@@ -121,8 +201,7 @@ export default function Fleet() {
               <tr>
                 <td colSpan={8} className="px-4 py-6" style={{ color: "var(--muted)" }}>
                   <div className="flex flex-col items-center">
-                    <span>No incidents yet — the fleet is healthy. Fire a mutation from the Lab control panel:</span>
-                    <CommandLine cmd="npm run lab" />
+                    <span>No incidents yet — every run Bright Data has performed so far came back clean.</span>
                   </div>
                 </td>
               </tr>
@@ -157,7 +236,11 @@ export default function Fleet() {
                 <td className="border-b px-4 py-2" style={{ borderColor: "var(--line)" }}>
                   <ResolutionPill resolution={r.resolution} />
                 </td>
-                <td className="border-b px-4 py-2" style={{ borderColor: "var(--line)" }}>
+                <td
+                  className="border-b px-4 py-2"
+                  style={{ borderColor: "var(--line)" }}
+                  title="Heal attempts on this incident — the only spend ANANSI initiates."
+                >
                   {r.credits_spent}
                 </td>
                 <td className="border-b px-4 py-2" style={{ borderColor: "var(--line)" }}>

@@ -18,69 +18,47 @@ const CONNECTOR: Record<string, string> = {
   pending: "var(--line)",
 };
 
-const PHASE_META: Record<HealAttempt["phase"], { label: string; title: string }> = {
-  v1: { label: "pre-approval verify on preview rows", title: "V1 — pre-approval verify on preview rows" },
-  v2: { label: "post-approval full canary sweep", title: "V2 — post-approval full canary sweep" },
-};
-
-// Group the audit entries into real attempts: each v1 entry opens an attempt;
-// the v2 entry that follows a passing v1 is the SAME attempt's post-approval
-// sweep (shell/incident.ts writes both with one prompt/diff), never a new one.
-function groupAttempts(entries: HealAttempt[]): HealAttempt[][] {
-  const groups: HealAttempt[][] = [];
-  for (const e of entries) {
-    const open = groups[groups.length - 1];
-    if (e.phase === "v2" && open && open.length === 1 && open[0]!.phase === "v1") open.push(e);
-    else groups.push([e]);
-  }
-  return groups;
-}
-
-// One card per real attempt: the prompt and diff render once, with a verdict
-// row per verify phase (v1 pre-approval, v2 post-approval sweep).
-function AttemptCard({ group, index }: { group: HealAttempt[]; index: number }) {
-  const first = group[0]!;
+// One card per heal attempt. There is exactly one verify per attempt now: the
+// V1 pre-approval gate. The post-approval sweep that used to share a card is
+// gone — Bright Data's next scheduled run is the verification (ADR-005).
+function AttemptCard({ attempt, index }: { attempt: HealAttempt; index: number }) {
   return (
     <div className="rounded-lg border" style={{ borderColor: "var(--line)", background: "var(--panel-2)" }}>
       <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2" style={{ borderColor: "var(--line)" }}>
         <span className="text-[11px] font-bold uppercase tracking-widest">attempt {index + 1}</span>
-        <span className="num ml-auto text-[11px]" style={{ color: "var(--muted)" }} title={new Date(first.ts).toLocaleString()}>
-          {new Date(first.ts).toLocaleTimeString()}
+        <span className="num ml-auto text-[11px]" style={{ color: "var(--muted)" }} title={new Date(attempt.ts).toLocaleString()}>
+          {new Date(attempt.ts).toLocaleTimeString()}
         </span>
       </div>
       <div className="flex flex-col gap-3 p-3">
-        <div className="flex flex-col gap-1.5">
-          {group.map((a) => (
-            <div key={a.phase} className="flex flex-wrap items-center gap-2">
-              <Chip color="var(--accent)" border="var(--accent)" title={PHASE_META[a.phase].title}>
-                {a.phase}
-              </Chip>
-              <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>
-                {PHASE_META[a.phase].label}
-              </span>
-              <span className="ml-auto">
-                {a.verdict ? <VerdictChip v={a.verdict} /> : <Chip title="verify has not run yet">… awaiting verdict</Chip>}
-              </span>
-            </div>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <Chip color="var(--accent)" border="var(--accent)" title="V1 — pre-approval verify on preview rows">
+            v1
+          </Chip>
+          <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>
+            pre-approval verify on preview rows
+          </span>
+          <span className="ml-auto">
+            {attempt.verdict ? <VerdictChip v={attempt.verdict} /> : <Chip title="verify has not run yet">… awaiting verdict</Chip>}
+          </span>
         </div>
         <div>
-          <Caption>auto-generated heal prompt · {first.prompt.length} chars</Caption>
+          <Caption>auto-generated heal prompt · {attempt.prompt.length} chars</Caption>
           <blockquote
             className="mt-1.5 rounded-r-md border-l-2 py-1.5 pl-3 pr-2 text-[12px] leading-relaxed"
             style={{ borderColor: "var(--accent)", background: "var(--accent-soft)" }}
           >
-            {first.prompt}
+            {attempt.prompt}
           </blockquote>
         </div>
-        {first.diff_summary && (
+        {attempt.diff_summary && (
           <div>
             <Caption>diff summary</Caption>
             <pre
               className="mt-1.5 max-h-48 overflow-auto rounded-md border p-2.5 text-[11.5px] leading-relaxed"
               style={{ borderColor: "var(--line)", background: "var(--code-bg)" }}
             >
-              {first.diff_summary}
+              {attempt.diff_summary}
             </pre>
           </div>
         )}
@@ -257,7 +235,11 @@ export default function Trace() {
             </div>
           </div>
         </div>
-        <Kpi label="credits" value={rec.credits_spent} />
+        <Kpi
+          label="heal attempts"
+          value={rec.credits_spent}
+          title="Heal attempts on this incident. A heal runs the scraper to produce preview rows, so it is the only thing ANANSI spends on — polling and archiving are free."
+        />
         <Kpi label="wall" value={rec.wall_ms ? `${Math.round(rec.wall_ms / 1000)}s` : "running"} />
         <Kpi label="approved by" value={rec.approved_by ?? "—"} />
       </div>
@@ -304,8 +286,8 @@ export default function Trace() {
                 {s.name.startsWith("2") && evidence && <EvidenceView pack={evidence} />}
                 {s.name.startsWith("3") && rec.heal_attempts.length > 0 && (
                   <div className="mt-2 flex flex-col gap-2">
-                    {groupAttempts(rec.heal_attempts).map((g, idx) => (
-                      <AttemptCard key={`${g[0]!.ts}-${idx}`} group={g} index={idx} />
+                    {rec.heal_attempts.map((a, idx) => (
+                      <AttemptCard key={`${a.ts}-${idx}`} attempt={a} index={idx} />
                     ))}
                   </div>
                 )}

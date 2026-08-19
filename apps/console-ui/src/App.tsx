@@ -4,7 +4,7 @@ import { StatePill, ago } from "./components";
 import Fleet from "./pages/Fleet";
 import Trace from "./pages/Trace";
 import Diff from "./pages/Diff";
-import Scans from "./pages/Scans";
+import Runs from "./pages/Runs";
 
 function SpiderMark({ size = 15 }: { size?: number }) {
   return (
@@ -19,19 +19,19 @@ function SpiderMark({ size = 15 }: { size?: number }) {
   );
 }
 
-// Rehearsal and fixture runs are labelled in the masthead: their heals are
-// simulated and their "credits" are page loads, so the number below must never
-// be read as Bright Data spend. Real mode shows no badge — that is the default.
+// ANANSI_ADAPTER selects the HEAL seam only — monitoring is read-only in every
+// mode. The badge therefore says nothing about spend or about reading the
+// platform; it says whether a fix would really be issued to Scraper Studio.
 const MODE_BADGE: Record<string, { label: string; title: string }> = {
-  live: {
-    label: "rehearsal",
-    title: "Agent is on the live-Lab adapter: real fetches of the Mutation Lab, SIMULATED heals, no Bright Data calls and no credits spent.",
-  },
   fake: {
     label: "fixtures",
-    title: "Agent is on the fake adapter: banked fixture replay. No network, no Bright Data calls, no credits spent.",
+    title: "Agent is on the fake heal adapter: no `scraper heal` is issued and every fix is simulated. Job history is still read from the real platform.",
   },
 };
+
+// A poll older than this means the agent has stopped reading the platform, so
+// the fleet on screen is stale no matter how green it looks.
+const STALE_POLL_MS = 10 * 60_000;
 
 function NavTab({ to, label, active }: { to: string; label: string; active: boolean }) {
   return (
@@ -54,7 +54,8 @@ export default function App() {
   const { pathname } = useLocation();
   const alert = state?.fleet.some((f) => f.state !== "healthy" && f.state !== "watching") ?? false;
   const badge = state?.mode ? MODE_BADGE[state.mode] : undefined;
-  const sweep = state?.lastSweep;
+  const poll = state?.lastPoll ?? null;
+  const pollStale = poll != null && Date.now() - poll > STALE_POLL_MS;
   return (
     <div className="min-h-screen">
       <header
@@ -91,33 +92,38 @@ export default function App() {
           {state && (
             <>
               <span aria-hidden className="hidden h-4 w-px sm:inline-block" style={{ background: "var(--line)" }} />
-              {/* A healthy fleet is otherwise silent, so surface proof of life. */}
+              {/* A healthy fleet is otherwise silent. ANANSI never triggers a
+                  collection, so proof of life is the age of our last READ of
+                  the platform, not of a scan. */}
               <span
                 className="flex items-baseline gap-1.5 text-[11.5px]"
                 style={{ color: "var(--muted)" }}
                 title={
-                  sweep
-                    ? `Last scan ${new Date(sweep.sweep_ts).toLocaleString()} across ${sweep.canaries} canary(ies) — ${sweep.healthy ? "no violations" : "violations found"}`
-                    : "No sweep has completed yet"
+                  poll
+                    ? `ANANSI last read the Bright Data job API at ${new Date(poll).toLocaleString()}. Bright Data owns the schedule — ANANSI never triggers a run.`
+                    : "No collector has been polled yet. Either the agent has not completed a poll, or the account has no collectors — the console reads a shared volume and cannot tell these apart."
                 }
               >
-                last scan
+                last poll
                 <span
                   className="num text-[13px] font-bold"
-                  style={{ color: sweep ? (sweep.healthy ? "var(--good)" : "var(--bad)") : "var(--warn)" }}
+                  style={{ color: poll == null ? "var(--warn)" : pollStale ? "var(--bad)" : "var(--good)" }}
                 >
-                  {sweep ? ago(sweep.sweep_ts) : "never"}
+                  {poll ? ago(poll) : "never"}
                 </span>
               </span>
               <span aria-hidden className="hidden h-4 w-px sm:inline-block" style={{ background: "var(--line)" }} />
               <span
                 className="flex items-baseline gap-1.5 text-[11.5px]"
                 style={{ color: "var(--muted)" }}
-                title="Bright Data credits spent across all incidents"
+                title="Runs Bright Data performed in the last 24h that failed or partly failed. ANANSI observes these; it does not cause them."
               >
-                credits
-                <span className="num text-[13px] font-bold" style={{ color: "var(--ink)" }}>
-                  {state.creditsSpent}
+                failed runs · 24h
+                <span
+                  className="num text-[13px] font-bold"
+                  style={{ color: state.failedRuns24h ? "var(--bad)" : "var(--good)" }}
+                >
+                  {state.failedRuns24h}
                 </span>
               </span>
             </>
@@ -125,14 +131,14 @@ export default function App() {
           <span aria-hidden className="hidden h-4 w-px sm:inline-block" style={{ background: "var(--line)" }} />
           <nav className="flex items-center gap-1.5">
             <NavTab to="/" label="fleet" active={pathname === "/"} />
-            <NavTab to="/scans" label="scans" active={pathname === "/scans"} />
+            <NavTab to="/runs" label="runs" active={pathname === "/runs"} />
           </nav>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-6 py-6">
         <Routes>
           <Route path="/" element={<Fleet />} />
-          <Route path="/scans" element={<Scans />} />
+          <Route path="/runs" element={<Runs />} />
           <Route path="/incident/:id" element={<Trace />} />
           <Route path="/incident/:id/diff" element={<Diff />} />
         </Routes>
