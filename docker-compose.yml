@@ -37,8 +37,8 @@ services:
       - SERVICE_FQDN_CONSOLE_4700
       - PORT=4700
       - ANANSI_DATA=/data
-      # Mirrors the agent's adapter so the masthead can label a rehearsal run.
-      - ANANSI_MODE=${ANANSI_ADAPTER:-live}
+      # Mirrors the agent's heal adapter so the masthead can label an offline run.
+      - ANANSI_MODE=${ANANSI_ADAPTER:-real}
     volumes:
       - anansi-data:/data
     depends_on:
@@ -64,19 +64,19 @@ services:
         WITH_BRIGHTDATA_CLI: ${WITH_BRIGHTDATA_CLI:-false}
     environment:
       - ANANSI_DATA=/data
-      # live = rehearsal (real fetches, simulated heals, no credits).
-      # Set ANANSI_ADAPTER=real in Coolify once the collector_id is filled in.
-      - ANANSI_ADAPTER=${ANANSI_ADAPTER:-live}
-      # Rehearsal reaches the Lab over the internal network — no public DNS, no
-      # egress. REAL mode must instead point at the Lab's PUBLIC url, because
-      # the scrape happens on Bright Data's machines, not this one.
+      # Selects the HEAL seam only: real (CLI) or fake (offline fixtures).
+      - ANANSI_ADAPTER=${ANANSI_ADAPTER:-real}
+      # Where the HTML archive plain-fetches Lab canaries. Bright Data scrapes
+      # the Lab's PUBLIC url on its own schedule; this is only our free capture,
+      # so the internal network address is correct here.
       - ANANSI_LAB_BASE=${ANANSI_LAB_BASE:-http://lab:4600}
       # Non-interactive CLI auth. Without this the real adapter needs an
       # interactive `brightdata login` inside the container, whose credentials
       # live in ~/.config/brightdata-cli and are wiped by every redeploy.
       - BRIGHTDATA_API_KEY=${BRIGHTDATA_API_KEY:-}
-      # Sweep interval. Contract default is 30 min; set 1-2 for a live demo.
-      - ANANSI_CADENCE_MINUTES=${ANANSI_CADENCE_MINUTES:-}
+      # Detection latency, not cost: polling spends no page loads, so this can
+      # be tightened freely. Bright Data owns the collection schedule.
+      - ANANSI_POLL_SECONDS=${ANANSI_POLL_SECONDS:-60}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     volumes:
       - anansi-data:/data

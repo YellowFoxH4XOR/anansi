@@ -9,7 +9,7 @@
     "console": "tsx apps/console/server.ts",
     "ui:build": "npm --prefix apps/console-ui run build",
     "ui:dev": "npm --prefix apps/console-ui run dev",
-    "scheduler": "tsx apps/agent/main.ts",
+    "monitor": "tsx apps/agent/main.ts",
     "collector:reset": "tsx apps/agent/reset-collector.ts",
     "store:clear": "tsx apps/agent/clear-store.ts",
     "test": "vitest run",

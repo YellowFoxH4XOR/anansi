@@ -1,11 +1,15 @@
-# Contract for the Mutation Lab storefront. The canary URLs below use a
-# placeholder origin — either edit them to the deployed Lab URL, or leave them
-# and set ANANSI_LAB_BASE (e.g. the Coolify domain) and the scheduler rewrites
-# the origin at load time. collector_id: fill in after `brightdata scraper create`.
+# Contract for the Mutation Lab storefront.
+#
+# The canary URLs MUST be the exact URLs Bright Data collects — they are the
+# join key evaluate() matches dataset rows against, and a canary the rows never
+# match is a golden that silently never runs. So they carry the PUBLIC origin,
+# always. ANANSI_LAB_BASE does not change them: it only redirects the archive's
+# own free GET onto the compose network. collector_id: fill in after
+# `brightdata scraper create`.
 scraper: lab-storefront
 collector_id: c_msyy76jk20f9e9mrh5
 canaries:
-  - url: https://anansi-lab.vercel.app/product/echo-speaker
+  - url: https://anansi-lab.akshatkatiyar.com/product/echo-speaker
     goldens:
       title:
         value: "Echo Portable Speaker"
@@ -13,7 +17,7 @@ canaries:
         similarity_metric: token_set_ratio
       price: { value: 49.99, tolerance_pct: 15 }
       availability: { one_of: ["in stock", "out of stock"] }
-  - url: https://anansi-lab.vercel.app/product/aurora-lamp
+  - url: https://anansi-lab.akshatkatiyar.com/product/aurora-lamp
     goldens:
       title:
         value: "Aurora Desk Lamp"
@@ -21,7 +25,7 @@ canaries:
         similarity_metric: token_set_ratio
       price: { value: 29.99, tolerance_pct: 20 }
       availability: { one_of: ["in stock", "out of stock"] }
-  - url: https://anansi-lab.vercel.app/product/graphite-keyboard
+  - url: https://anansi-lab.akshatkatiyar.com/product/graphite-keyboard
     goldens:
       title:
         value: "Graphite Mechanical Keyboard"
@@ -29,7 +33,7 @@ canaries:
         similarity_metric: token_set_ratio
       price: { value: 89.00, tolerance_pct: 15 }
       availability: { one_of: ["in stock", "out of stock"] }
-  - url: https://anansi-lab.vercel.app/product/tidal-bottle
+  - url: https://anansi-lab.akshatkatiyar.com/product/tidal-bottle
     goldens:
       title:
         value: "Tidal Insulated Bottle"
@@ -46,5 +50,4 @@ invariants:
   - "sale_price == null || sale_price <= price"
   - "price > 0"
 fill_rate_min: 0.9
-cadence_minutes: 30
 exclude_fields_containing_pii: true

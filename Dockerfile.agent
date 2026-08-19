@@ -1,4 +1,5 @@
-# ANANSI agent — the scheduler: sense → diagnose → heal → verify → promote.
+# ANANSI agent — the monitor: watch Bright Data's own runs, then
+# sense → diagnose → heal → verify → promote. It never starts a collection.
 # The only writer to the data volume. No domain, no exposed port; the console
 # is how you watch it.
 FROM node:22-slim
@@ -21,7 +22,7 @@ COPY packages/adapters/ ./packages/adapters/
 COPY apps/agent/ ./apps/agent/
 COPY contracts/ ./contracts/
 
-# Rehearsal by default: real fetches of the Lab, simulated heals, no credits.
-# Set ANANSI_ADAPTER= (empty/unset) for the real CLI once the collector exists.
-ENV ANANSI_DATA=/data ANANSI_ADAPTER=live ANANSI_CONTRACTS=/app/contracts
+# ANANSI_ADAPTER selects the HEAL seam only: real (CLI) or fake (offline).
+# Reading job history always goes over REST and needs BRIGHTDATA_API_KEY.
+ENV ANANSI_DATA=/data ANANSI_ADAPTER=real ANANSI_CONTRACTS=/app/contracts
 CMD ["npx", "tsx", "apps/agent/main.ts"]
