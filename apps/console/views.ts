@@ -4,7 +4,7 @@
 
 import type { CollectorState, GateResult, IncidentRecord } from "../../packages/core/types.js";
 import type { FleetEntry } from "./fleet.js";
-import { isFailure, type JobRow } from "./jobs.js";
+import { emptyIncidentsNote, isFailure, type JobRow } from "./jobs.js";
 
 const esc = (s: string) =>
   s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -166,7 +166,7 @@ export function indexPage(incidents: IncidentRecord[], healAttempts: number, job
 <div class="panel">
 <table class="inc">
 <tr><th>id</th><th>scraper</th><th>signals</th><th>route</th><th>resolution</th><th>heals</th><th>wall</th><th>opened</th></tr>
-${rows || `<tr><td colspan="8" style="color:var(--muted)">No incidents yet — every run Bright Data has performed so far came back clean.</td></tr>`}
+${rows || `<tr><td colspan="8" style="color:var(--muted)">${esc(emptyIncidentsNote(jobs))}</td></tr>`}
 </table>
 </div>
 ${runTable(jobs)}`;

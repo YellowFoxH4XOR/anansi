@@ -121,3 +121,16 @@ export function jobRows(ledger: readonly JobLedgerEntry[], runs: readonly RunRow
 export function failuresSince(rows: readonly JobRow[], sinceMs: number): number {
   return rows.filter((r) => isFailure(r.verdict) && (r.finished ?? r.seen) >= sinceMs).length;
 }
+
+/** What the incident table may claim when it is empty.
+ *
+ *  "every run came back clean" is an assertion about the RUNS, and an empty
+ *  incident list is not evidence for it — a failed run that opened no incident
+ *  makes it a flat lie, which is how a 15-page failure came to be reported as a
+ *  healthy fleet. So the sentence is derived from the runs themselves, and when
+ *  the two disagree it says so instead of picking the flattering one. */
+export function emptyIncidentsNote(jobs: readonly JobRow[]): string {
+  const failed = jobs.filter((j) => isFailure(j.verdict)).length;
+  if (failed === 0) return "No incidents — and no failed runs to explain: every run Bright Data has performed came back clean.";
+  return `No incidents recorded, but ${failed} observed run(s) did not come back clean. That is a gap in ANANSI, not a healthy fleet — check Runs.`;
+}

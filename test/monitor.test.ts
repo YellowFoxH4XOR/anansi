@@ -307,9 +307,15 @@ describe("platform failures on a collector with no contract", () => {
     expect(heal.calls).toEqual([]);
   });
 
-  it("does not heal the first failure nothing explains", async () => {
+  it("does not heal the first failure nothing explains — but does report it", async () => {
     // failed_pages with no rows at all is real. Routing it blind to heal burns
     // an AI generation on what is usually a platform hiccup.
+    //
+    // This used to return before opening an incident at all, which conflated two
+    // different decisions: "do not spend a heal on this" and "do not tell anyone
+    // this happened". Only the first is defensible. Observed live — a run with
+    // 15 failed pages was reported by the console as a fleet where "every run
+    // came back clean".
     const heal = new FakeBrightData();
     const api = new FakeApi(
       [{ id: "c_bare" }],
@@ -323,10 +329,20 @@ describe("platform failures on a collector with no contract", () => {
     clock += 60_000;
     const report = await monitor.pollCollector("c_bare");
 
-    expect(report.incidents_opened).toEqual([]);
+    // Visible…
+    expect(report.incidents_opened).toHaveLength(1);
+    const rec = store.incident(report.incidents_opened[0]!)!;
+    expect(rec.route).toBe("retry");
+    // …and explicitly closed as "we saw this and chose not to act", rather than
+    // left with a blank resolution that reads as still in flight.
+    expect(rec.resolution).toBe("observed");
+    expect(rec.credits_spent).toBe(0);
+
+    // …but not healed, and the strike still counts toward the second one.
     expect(heal.calls).toEqual([]);
     expect(store.auditLog().map((e) => e.event)).toContain("unexplained_failure");
     expect(store.monitorCursor("c_bare").unexplained_failures).toBe(1);
+    expect(store.collectorState("c_bare")).toBe("healthy");
   });
 });
 

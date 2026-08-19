@@ -165,6 +165,10 @@ export default function Fleet() {
   const quarantined = incidents.filter((i) => i.resolution === "quarantined").length;
   const open = incidents.filter((i) => i.resolution == null).length;
   const openFor = (scraper: string) => incidents.find((i) => i.scraper === scraper && i.resolution == null);
+  // Runs that failed, straight from the fleet cards. An empty incident table is
+  // not evidence the runs were clean, and this is the number that decides which
+  // of the two the console is allowed to claim.
+  const failedRuns = fleet.reduce((n, f) => n + f.failed24h, 0);
 
   return (
     <div className="fade-in flex flex-col gap-4">
@@ -218,7 +222,15 @@ export default function Fleet() {
               <tr>
                 <td colSpan={8} className="px-4 py-6" style={{ color: "var(--muted)" }}>
                   <div className="flex flex-col items-center">
-                    <span>No incidents yet — every run Bright Data has performed so far came back clean.</span>
+                    {/* An empty incident list is not evidence that the runs were
+                        clean. When the fleet reports failures and the incident
+                        table is empty, the two disagree — and the honest reading
+                        is that ANANSI missed something, not that all is well. */}
+                    <span>
+                      {failedRuns === 0
+                        ? "No incidents — and no failed runs to explain: every run Bright Data has performed came back clean."
+                        : `No incidents recorded, but ${failedRuns} run(s) in the last 24h did not come back clean. That is a gap in ANANSI, not a healthy fleet — check Runs.`}
+                    </span>
                   </div>
                 </td>
               </tr>

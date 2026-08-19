@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { JobLedgerEntry } from "../packages/adapters/store/index.js";
-import { failuresSince, isFailure, jobRows, jobTrigger, verdictFor, type RunRow } from "../apps/console/jobs.js";
+import { emptyIncidentsNote, failuresSince, isFailure, jobRows, jobTrigger, verdictFor, type RunRow } from "../apps/console/jobs.js";
 
 function entry(over: Partial<JobLedgerEntry> = {}): JobLedgerEntry {
   return { job_id: "j_1", collector: "shop", ts: 1000, state: "handled", outcome: "success", ...over };
@@ -99,5 +99,33 @@ describe("job history view-model", () => {
       [],
     );
     expect(failuresSince(rows, now - day)).toBe(2);
+  });
+});
+
+describe("an empty incident table is not a claim about the runs", () => {
+  // The console said "every run Bright Data has performed so far came back
+  // clean" whenever the incident list was empty. That is an assertion about the
+  // RUNS, and an empty list is no evidence for it: a run that failed and opened
+  // no incident turned the sentence into a flat lie, which is exactly what
+  // happened to a 55% success-rate job with 15 failed pages.
+  const row = (verdict: "ok" | "failed" | "partial" | "seeded") =>
+    ({ job_id: `j_${verdict}`, collector: "shop", verdict, trigger: "scheduled" as const, seen: 1, rows: 1, error_rows: 0 });
+
+  it("says all clean only when the runs actually were", () => {
+    const note = emptyIncidentsNote([row("ok"), row("seeded")]);
+    expect(note).toContain("came back clean");
+  });
+
+  it("admits a gap when runs failed and nothing recorded why", () => {
+    const note = emptyIncidentsNote([row("ok"), row("failed"), row("partial")]);
+    expect(note).not.toContain("came back clean");
+    expect(note).toContain("2");
+    // Names it as our problem, not as a healthy fleet.
+    expect(note).toContain("gap in ANANSI");
+  });
+
+  it("makes the same claim with no data at all as with clean data", () => {
+    // Nothing observed yet is not a failure, and must not read as an alarm.
+    expect(emptyIncidentsNote([])).toContain("came back clean");
   });
 });

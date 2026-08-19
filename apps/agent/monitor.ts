@@ -456,11 +456,14 @@ export class Monitor {
     }
 
     if (health.unexplained && strikes === 1) {
-      // First unexplained failure: recorded, not healed.
-      await this.recordRun(name, records, {}, job.id, ts, false);
+      // First unexplained failure: watched, not healed. It still opens an
+      // incident. "Do not spend a heal on this" and "do not tell anyone this
+      // happened" are different decisions, and only the first one is defensible:
+      // returning here left a run with 15 failed pages showing in the console as
+      // "every run came back clean". The retry lane below records it and closes
+      // it without spending anything, which is exactly the intended outcome.
       await store.audit({ event: "unexplained_failure", scraper: name, job_id: job.id, strike: 1 });
       this.log(`[${name}] job ${job.id} failed with nothing to explain it — first strike, watching rather than healing`);
-      return { outcome: health.outcome };
     }
 
     // A collector that was watching a promoted fix and failed the very next

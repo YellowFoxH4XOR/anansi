@@ -99,7 +99,7 @@ export async function driveIncident(
     const state = incident.route === "retry" ? "healthy" : "quarantined";
     await store.setCollectorState(contract.scraper, state);
     log(`incident ${rec.id}: routed to ${incident.route} lane — not healing`);
-    return finish(incident.route === "infra" ? "infra" : incident.route === "dead" ? "dead" : undefined);
+    return finish(incident.route === "infra" ? "infra" : incident.route === "dead" ? "dead" : "observed");
   }
 
   // Diagnose inputs: last-good + current snapshot for the worst-hit URL. Both
