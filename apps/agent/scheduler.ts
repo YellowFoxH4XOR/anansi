@@ -31,8 +31,7 @@ export class Scheduler {
 
     this.running.add(name);
     try {
-      const state = store.collectorState(name);
-      if (state !== "healthy" && state !== "watching") {
+      const state = store.collectorState(name);      if (state !== "healthy" && state !== "watching") {
         this.log(`[${name}] state=${state} — skipping sweep`);
         return;
       }
@@ -44,6 +43,10 @@ export class Scheduler {
         return;
       }
 
+      // Stamped on every row so a sweep is reconstructable as one event. Row
+      // timestamps alone cannot do it: a 4-canary sweep can outlast the gap to
+      // the next one at demo cadence.
+      const sweepTs = Date.now();
       const records: RunRecord[] = [];
       for (const c of contract.canaries) {
         const raw = await bd.runSync(deps.collectorId, c.url);
@@ -55,7 +58,7 @@ export class Scheduler {
       await store.setFlags(name, flags);
 
       if (result.kind === "healthy") {
-        for (const r of records) await store.appendRun({ ...r, scraper: name, healthy: true });
+        for (const r of records) await store.appendRun({ ...r, scraper: name, healthy: true, sweep_ts: sweepTs });
         this.lastHealthySweep.set(name, records);
         if (state === "watching") await store.setCollectorState(name, "healthy");        if (result.warnings.length) {
           this.log(`[${name}] healthy with warnings: ${result.warnings.map((w) => `${w.signal}:${w.field ?? ""}`).join(", ")}`);
@@ -63,7 +66,7 @@ export class Scheduler {
         return;
       }
 
-      for (const r of records) await store.appendRun({ ...r, scraper: name, healthy: false });
+      for (const r of records) await store.appendRun({ ...r, scraper: name, healthy: false, sweep_ts: sweepTs });
       this.log(`[${name}] INCIDENT (${result.route}): ${result.signals.map((v) => `${v.signal}${v.field ? `:${v.field}` : ""}`).join(", ")}`);
       const baseline = this.lastHealthySweep.get(name) ?? [];
       await driveIncident(result, contract, baseline, { ...deps, log: this.log });

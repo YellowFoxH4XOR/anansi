@@ -185,3 +185,40 @@ describe("store clear", () => {
     expect(existsSync(join(store.dir, "fixtures", "heal-m1.json"))).toBe(false);
   });
 });
+
+describe("sweep history", () => {
+  const run = (over: Record<string, unknown>) =>
+    ({ url: "u", fields: {}, scraper: contract.scraper, ...over }) as never;
+
+  it("groups rows into one sweep per cadence tick", async () => {
+    // Two 4-canary sweeps. At demo cadence the gap between them can be shorter
+    // than a sweep's own duration, so only sweep_ts can separate them.
+    for (const t of [0, 20, 40, 60]) await store.appendRun(run({ ts: 1000 + t, healthy: true, sweep_ts: 1000 }));
+    for (const t of [0, 20, 40, 60]) await store.appendRun(run({ ts: 1100 + t, healthy: false, sweep_ts: 1100 }));
+
+    const sweeps = store.sweeps(contract.scraper);
+    expect(sweeps).toHaveLength(2);
+    expect(sweeps[0]).toMatchObject({ sweep_ts: 1000, healthy: true, canaries: 4, errors: 0 });
+    expect(sweeps[1]).toMatchObject({ sweep_ts: 1100, healthy: false, canaries: 4 });
+    expect(sweeps[0]!.finished_ts).toBe(1060);
+  });
+
+  it("counts error rows and marks the sweep unhealthy", async () => {
+    await store.appendRun(run({ ts: 1, healthy: false, sweep_ts: 1, error_code: "blocked" }));
+    await store.appendRun(run({ ts: 2, healthy: false, sweep_ts: 1 }));
+    const s = store.sweeps(contract.scraper)[0]!;
+    expect(s).toMatchObject({ healthy: false, canaries: 2, errors: 1 });
+  });
+
+  it("falls back to proximity for rows written before sweep_ts existed", async () => {
+    for (const t of [0, 20]) await store.appendRun(run({ ts: 1000 + t, healthy: true }));
+    for (const t of [0, 20]) await store.appendRun(run({ ts: 1000 + 4 * 60_000 + t, healthy: true }));
+    expect(store.sweeps(contract.scraper)).toHaveLength(2);
+  });
+
+  it("returns the most recent sweeps when limited", async () => {
+    for (let i = 1; i <= 5; i++) await store.appendRun(run({ ts: i * 10, healthy: true, sweep_ts: i * 10 }));
+    const sweeps = store.sweeps(contract.scraper, 2);
+    expect(sweeps.map((s) => s.sweep_ts)).toEqual([40, 50]);
+  });
+});

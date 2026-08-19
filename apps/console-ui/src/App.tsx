@@ -1,9 +1,10 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Link, Route, Routes, useLocation } from "react-router-dom";
 import { usePoll, type StatePayload } from "./api";
-import { StatePill } from "./components";
+import { StatePill, ago } from "./components";
 import Fleet from "./pages/Fleet";
 import Trace from "./pages/Trace";
 import Diff from "./pages/Diff";
+import Scans from "./pages/Scans";
 
 function SpiderMark({ size = 15 }: { size?: number }) {
   return (
@@ -32,10 +33,28 @@ const MODE_BADGE: Record<string, { label: string; title: string }> = {
   },
 };
 
+function NavTab({ to, label, active }: { to: string; label: string; active: boolean }) {
+  return (
+    <Link
+      to={to}
+      aria-current={active ? "page" : undefined}
+      className="rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors"
+      style={{
+        borderColor: active ? "var(--accent)" : "var(--line)",
+        color: active ? "var(--accent)" : "var(--muted)",
+      }}
+    >
+      {label}
+    </Link>
+  );
+}
+
 export default function App() {
   const state = usePoll<StatePayload>("/api/state", 5000);
+  const { pathname } = useLocation();
   const alert = state?.fleet.some((f) => f.state !== "healthy" && f.state !== "watching") ?? false;
   const badge = state?.mode ? MODE_BADGE[state.mode] : undefined;
+  const sweep = state?.lastSweep;
   return (
     <div className="min-h-screen">
       <header
@@ -72,6 +91,25 @@ export default function App() {
           {state && (
             <>
               <span aria-hidden className="hidden h-4 w-px sm:inline-block" style={{ background: "var(--line)" }} />
+              {/* A healthy fleet is otherwise silent, so surface proof of life. */}
+              <span
+                className="flex items-baseline gap-1.5 text-[11.5px]"
+                style={{ color: "var(--muted)" }}
+                title={
+                  sweep
+                    ? `Last scan ${new Date(sweep.sweep_ts).toLocaleString()} across ${sweep.canaries} canary(ies) — ${sweep.healthy ? "no violations" : "violations found"}`
+                    : "No sweep has completed yet"
+                }
+              >
+                last scan
+                <span
+                  className="num text-[13px] font-bold"
+                  style={{ color: sweep ? (sweep.healthy ? "var(--good)" : "var(--bad)") : "var(--warn)" }}
+                >
+                  {sweep ? ago(sweep.sweep_ts) : "never"}
+                </span>
+              </span>
+              <span aria-hidden className="hidden h-4 w-px sm:inline-block" style={{ background: "var(--line)" }} />
               <span
                 className="flex items-baseline gap-1.5 text-[11.5px]"
                 style={{ color: "var(--muted)" }}
@@ -84,11 +122,17 @@ export default function App() {
               </span>
             </>
           )}
+          <span aria-hidden className="hidden h-4 w-px sm:inline-block" style={{ background: "var(--line)" }} />
+          <nav className="flex items-center gap-1.5">
+            <NavTab to="/" label="fleet" active={pathname === "/"} />
+            <NavTab to="/scans" label="scans" active={pathname === "/scans"} />
+          </nav>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-6 py-6">
         <Routes>
           <Route path="/" element={<Fleet />} />
+          <Route path="/scans" element={<Scans />} />
           <Route path="/incident/:id" element={<Trace />} />
           <Route path="/incident/:id/diff" element={<Diff />} />
         </Routes>

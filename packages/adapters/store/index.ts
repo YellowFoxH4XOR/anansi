@@ -9,7 +9,16 @@ import { join } from "node:path";
 import type { CollectorState, FieldHistory, IncidentRecord, RunRecord } from "../../core/types.js";
 import type { PriorFlags } from "../../core/sense/evaluate.js";
 
-export type StoredRun = RunRecord & { scraper: string; lab_state?: string; healthy?: boolean };
+export type StoredRun = RunRecord & { scraper: string; lab_state?: string; healthy?: boolean; sweep_ts?: number };
+
+/** One cadence tick, reconstructed from the rows it wrote. */
+export type SweepSummary = {
+  sweep_ts: number; // when the sweep started
+  finished_ts: number; // last row it wrote
+  healthy: boolean;
+  canaries: number;
+  errors: number;
+};
 
 type StateFile = {
   collectors: Record<string, CollectorState>;
@@ -45,6 +54,40 @@ export class Store {
 
   runs(scraper: string): StoredRun[] {
     return this.readLines<StoredRun>("runs.jsonl").filter((r) => r.scraper === scraper);
+  }
+
+  /** Recent sweeps, newest last. A healthy fleet writes nothing else, so this is
+   *  the only evidence the agent is alive and working. Rows are grouped by the
+   *  sweep_ts the scheduler stamps them with; rows written before that existed
+   *  fall back to proximity, which is why the gap is generous. */
+  sweeps(scraper: string, limit = 50): SweepSummary[] {
+    const LEGACY_GAP_MS = 3 * 60_000;
+    const groups: StoredRun[][] = [];
+    for (const r of this.runs(scraper)) {
+      const prev = groups[groups.length - 1];
+      const last = prev?.[prev.length - 1];
+      const sameSweep =
+        prev &&
+        last &&
+        (r.sweep_ts != null && last.sweep_ts != null
+          ? r.sweep_ts === last.sweep_ts
+          : r.ts - last.ts <= LEGACY_GAP_MS);
+      if (sameSweep) prev.push(r);
+      else groups.push([r]);
+    }
+
+    return groups.slice(-limit).map((rows) => {
+      const first = rows[0]!;
+      const last = rows[rows.length - 1]!;
+      return {
+        sweep_ts: first.sweep_ts ?? first.ts,
+        finished_ts: last.ts,
+        // appendRun stamps every row of a sweep with that sweep's verdict.
+        healthy: rows.every((r) => r.healthy === true),
+        canaries: rows.length,
+        errors: rows.filter((r) => r.error_code).length,
+      };
+    });
   }
 
   // Numeric history per field per URL for CUSUM, oldest first. labStateFilter lets

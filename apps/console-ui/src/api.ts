@@ -26,12 +26,22 @@ export type StageView = {
   gates?: GateResult[];
 };
 export type FleetEntry = { name: string; state: CollectorState; lastChecked?: number };
+export type SweepRow = {
+  scraper: string;
+  sweep_ts: number;
+  finished_ts: number;
+  healthy: boolean;
+  canaries: number;
+  errors: number;
+};
 export type StatePayload = {
   fleet: FleetEntry[];
   creditsSpent: number;
   incidents: IncidentRecord[];
   /** Agent adapter: "real" (platform) · "live" (rehearsal) · "fake" (fixtures). */
   mode?: string;
+  /** Most recent sweep across the fleet — the only proof a healthy agent is alive. */
+  lastSweep?: { scraper: string; sweep_ts: number; healthy: boolean; canaries: number } | null;
 };
 export type EvidencePack = {
   failing_fields: string[];

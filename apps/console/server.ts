@@ -25,6 +25,19 @@ function fleet(): { name: string; state: CollectorState; lastChecked?: number }[
   });
 }
 
+// A healthy fleet produces no incidents, so without this the console cannot
+// distinguish "scanning and finding nothing wrong" from "agent is dead".
+function lastSweep(): { scraper: string; sweep_ts: number; healthy: boolean; canaries: number } | null {
+  let newest: { scraper: string; sweep_ts: number; healthy: boolean; canaries: number } | null = null;
+  for (const name of Object.keys(store.collectors())) {
+    const s = store.sweeps(name, 1)[0];
+    if (s && (!newest || s.sweep_ts > newest.sweep_ts)) {
+      newest = { scraper: name, sweep_ts: s.sweep_ts, healthy: s.healthy, canaries: s.canaries };
+    }
+  }
+  return newest;
+}
+
 function incidentEvents(id: string): Record<string, unknown>[] {
   return store.auditLog().filter((e) => e.id === id);
 }
@@ -58,7 +71,22 @@ async function diffPayload(rec: IncidentRecord) {
 const mode = process.env.ANANSI_MODE ?? process.env.ANANSI_ADAPTER ?? "real";
 
 app.get("/api/state", (_req, res) => {
-  res.json({ fleet: fleet(), creditsSpent: store.creditsSpent(), incidents: store.incidents(), mode });
+  res.json({
+    fleet: fleet(),
+    creditsSpent: store.creditsSpent(),
+    incidents: store.incidents(),
+    mode,
+    lastSweep: lastSweep(),
+  });
+});
+
+app.get("/api/sweeps", (req, res) => {
+  const limit = Math.min(Number(req.query.limit ?? 50), 200);
+  const names = req.query.scraper ? [String(req.query.scraper)] : Object.keys(store.collectors());
+  const rows = names.flatMap((name) => store.sweeps(name, limit).map((s) => ({ scraper: name, ...s })));
+  // Newest first: the answer to "did it just scan?" should be the top row.
+  rows.sort((a, b) => b.sweep_ts - a.sweep_ts);
+  res.json(rows.slice(0, limit));
 });
 
 app.get("/api/incident/:id/events", (req, res) => {
