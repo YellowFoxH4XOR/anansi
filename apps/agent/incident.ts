@@ -105,20 +105,39 @@ export async function driveIncident(
   // Diagnose inputs: last-good + current snapshot for the worst-hit URL. Both
   // come from the archive, which captures pages the scraper itself never did.
   const failingFields = [...new Set(incident.signals.map((s) => s.field).filter((f): f is string => !!f))];
-  const hitUrl =
-    incident.signals.find((s) => s.url)?.url ?? incident.records.find((r) => r.snapshot_ref)?.url;
-  const currentRec = incident.records.find((r) => r.url === hitUrl && r.snapshot_ref);
-  const lastGoodRef = hitUrl ? store.lastGoodSnapshotRef(contract.scraper, hitUrl) : undefined;
-  if (!currentRec?.snapshot_ref || !lastGoodRef) {
-    log(`incident ${rec.id}: missing snapshots (current=${currentRec?.snapshot_ref}, lastGood=${lastGoodRef}) — quarantining`);
-    await store.setCollectorState(contract.scraper, "quarantined");
-    return finish("quarantined");
+
+  // Every URL worth diffing, best first: one a signal actually named, then any
+  // page the archive captured. Picking the first named URL and giving up when it
+  // had no baseline discarded a perfectly diffable page sitting next to it.
+  const candidates = [
+    ...incident.signals.flatMap((s) => (s.url ? [s.url] : [])),
+    ...incident.records.flatMap((r) => (r.snapshot_ref ? [r.url] : [])),
+  ];
+  const diffable = candidates
+    .map((url) => ({
+      url,
+      current: incident.records.find((r) => r.url === url && r.snapshot_ref)?.snapshot_ref,
+      lastGood: store.lastGoodSnapshotRef(contract.scraper, url),
+    }))
+    .find((c) => c.current && c.lastGood);
+
+  if (!diffable?.current || !diffable.lastGood) {
+    // Absence of evidence, not evidence of a broken scraper. This used to
+    // quarantine, which stopped the monitor dispatching ANY further job for the
+    // collector — a permanent halt with no automatic way out — because we
+    // happened to have no baseline archived yet. Nothing is spent, the incident
+    // is on the record, and the collector stays watched: the next clean run
+    // archives a baseline, and the failure after that can be diagnosed.
+    log(`incident ${rec.id}: nothing to diff — no page has both a current capture and an archived last-good yet. Recorded; still watching.`);
+    await store.setCollectorState(contract.scraper, "healthy");
+    return finish("undiagnosable");
   }
-  rec.last_good_ref = lastGoodRef;
-  rec.current_ref = currentRec.snapshot_ref;
-  const lastGoodHtml = await store.snapshot(lastGoodRef);
-  const currentHtml = await store.snapshot(currentRec.snapshot_ref);
-  const currentSnapshots: Record<string, string> = { [currentRec.url]: currentHtml };
+  const hitUrl = diffable.url;
+  rec.last_good_ref = diffable.lastGood;
+  rec.current_ref = diffable.current;
+  const lastGoodHtml = await store.snapshot(diffable.lastGood);
+  const currentHtml = await store.snapshot(diffable.current);
+  const currentSnapshots: Record<string, string> = { [hitUrl]: currentHtml };
 
   const priorFailures: string[] = [];
   for (let attempt = 1; attempt <= MAX_HEAL_ATTEMPTS; attempt++) {

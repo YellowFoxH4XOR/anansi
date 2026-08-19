@@ -38,7 +38,7 @@ describe("console stage view-model", () => {
 
     expect(stage(stages, "3 ·").meta).toContain("not attempted");
     // And it must say *why* diagnosis never ran, not "building evidence pack…".
-    expect(stage(stages, "2 ·").meta).toContain("no last-good snapshot");
+    expect(stage(stages, "2 ·").meta).toContain("nothing to diff yet");
   });
 
   it("reports the real number of failed heals", () => {
@@ -126,5 +126,24 @@ describe("console stage view-model", () => {
     const meta = stage(stagesFor(incident({ route: "retry" }), []), "TRIAGE").meta;
     expect(meta).not.toContain("cadence");
     expect(meta).toContain("next scheduled run");
+  });
+});
+
+describe("an incident with nothing to diff is not a quarantine", () => {
+  // This used to quarantine, which halted the collector permanently, and the
+  // console reported it as "human paged" — for an incident where nothing was
+  // attempted, nothing was spent and nobody needed to do anything.
+  it("does not say a human was paged", () => {
+    const stages = stagesFor(incident({ resolution: "undiagnosable", last_good_ref: undefined }), []);
+    const promote = stage(stages, "5 ·");
+    expect(promote.meta).not.toContain("human paged");
+    expect(promote.meta).toContain("still watching");
+    // Nothing failed at the promote stage, so it must not render as a failure.
+    expect(promote.status).not.toBe("fail");
+  });
+
+  it("explains that a baseline is what is missing", () => {
+    const stages = stagesFor(incident({ resolution: "undiagnosable", last_good_ref: undefined }), []);
+    expect(stage(stages, "2 ·").meta).toContain("nothing to diff yet");
   });
 });

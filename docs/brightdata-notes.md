@@ -127,3 +127,34 @@ so M1 arrives as an empty row and the heal loop has nothing to diff (observed as
 README surface table rule: render with a status column — "exercised in repo (file:line)" vs
 "designed, cut for scope (see CUTS.md)" — so Tier cuts never read as overclaiming.
 
+
+## The dataset does not always carry the failure (verified live, 2026-08-20)
+
+`GET /dca/dataset?id=<job>` returned an **empty array** for a scheduled run that
+the platform itself reported as `failed_pages=1, fails=1, success_rate=0`. The
+dashboard's own export of that same run contained the reason:
+
+```json
+[{"input": {"url": ".../product/echo-speaker"}, "error": "Error: price missing"}]
+```
+
+So a run that had explained itself perfectly was reported by ANANSI as "failed
+with no row-level error code", routed as unexplained, and quarantined without
+ever attempting a heal.
+
+The per-input failures live at **`GET /dca/jobs/{job_id}/hp_errors`**, which
+answers `{"errors":[{"url":…,"error":…,"consumer":…}]}`. The monitor now calls it
+whenever the job counters say a run failed and no row says why, and folds the
+result into the same row shape (`input` + `error`) everything downstream reads.
+
+Two consequences worth keeping in mind:
+
+- **`data_lines` counts records, not rows.** A run whose only output is an error
+  row reports `data_lines: 0`, which is why the volume check correctly said "0
+  rows" while the export plainly had one. They are counting different things.
+- **The message is prose, not a code.** `routeErrorCode` is right to treat
+  "Error: price missing" as unknown and refuse to spend a heal on a sentence. It
+  becomes routable only because it names a field the contract declares
+  *required* — see `requiredFieldsNamedIn`. An error that names nothing we
+  declared stays in its original lane, so an arbitrary message cannot invent a
+  heal for itself.

@@ -57,6 +57,14 @@ class FakeApi {
     return this.logs[jobId] ?? { id: jobId };
   }
 
+  /** Per-input errors keyed by job id — the endpoint the dataset does not cover. */
+  jobErrorsByJob: Record<string, { url?: string; error?: string }[]> = {};
+
+  async jobErrors(jobId: string): Promise<{ url?: string; error?: string }[]> {
+    this.calls.push(`jobErrors:${jobId}`);
+    return this.jobErrorsByJob[jobId] ?? [];
+  }
+
   async dataset(id: string): Promise<Record<string, unknown>[] | { status: string }> {
     this.calls.push(`dataset:${id}`);
     const entry = this.datasets[id];
@@ -881,5 +889,77 @@ describe("the platform's own name reaches the console", () => {
     const api = new FakeApi([{ id: "c_nameless" }], { c_nameless: [] });
     await monitorWith(api).pollOnce();
     expect(store.monitorCursor("c_nameless").platform_name).toBeUndefined();
+  });
+});
+
+describe("a failure the dataset does not explain is explained by hp_errors", () => {
+  // Straight from production. The 02:51 scheduled run reported failed_pages=1,
+  // fails=1, success_rate=0 and /dca/dataset returned []. The platform's own
+  // export of the SAME run contained:
+  //   [{"input":{"url":".../product/echo-speaker"},"error":"Error: price missing"}]
+  // So ANANSI announced "failed with no row-level error code" about a run that
+  // had said exactly what was wrong, and quarantined without healing.
+  const seed: Job = { id: "j_seed", finished: "2026-08-20T09:00:00Z", data_lines: 1 };
+  const failed: Job = { id: "j_fail", finished: "2026-08-20T11:00:00Z", data_lines: 0, failed_pages: 1 };
+  const canary = contract.canaries[0]!.url;
+
+  function apiWithErrors(errors: { url?: string; error?: string }[]) {
+    const api = new FakeApi(
+      [{ id: COLLECTOR }],
+      { [COLLECTOR]: [seed] },
+      { j_fail: { id: "j_fail", fails: 1, success_rate: 0 } },
+      { j_seed: [goldenRow(0)], j_fail: [] },
+    );
+    api.jobErrorsByJob = { j_fail: errors };
+    return api;
+  }
+
+  async function run(api: FakeApi) {
+    const monitor = monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]) });
+    await monitor.pollCollector(COLLECTOR);
+    pushJob(api, COLLECTOR, failed);
+    return monitor.pollCollector(COLLECTOR);
+  }
+
+  it("asks for the per-input errors when no row carries one", async () => {
+    const api = apiWithErrors([{ url: canary, error: "Error: price missing" }]);
+    await run(api);
+    expect(api.calls).toContain("jobErrors:j_fail");
+  });
+
+  it("stops claiming the run failed for no stated reason", async () => {
+    const api = apiWithErrors([{ url: canary, error: "Error: price missing" }]);
+    const report = await run(api);
+    const rec = store.incident(report.incidents_opened[0]!)!;
+    const text = JSON.stringify(rec.signal);
+    expect(text).not.toContain("no row-level error code");
+    expect(text).toContain("price");
+  });
+
+  it("routes a named required field to heal, not to retry forever", async () => {
+    // routeErrorCode is right that "Error: price missing" is not a code, and
+    // sends it to retry. But it names a field the contract declares required,
+    // which is the DOM change heal exists for. Left in retry it never heals.
+    const api = apiWithErrors([{ url: canary, error: "Error: price missing" }]);
+    const report = await run(api);
+    expect(store.incident(report.incidents_opened[0]!)!.route).toBe("heal");
+  });
+
+  it("leaves an error that names nothing we declared in its own lane", async () => {
+    // An arbitrary message must not be able to invent a heal for itself.
+    const api = apiWithErrors([{ url: canary, error: "aborted" }]);
+    const report = await run(api);
+    expect(store.incident(report.incidents_opened[0]!)!.route).not.toBe("heal");
+  });
+
+  it("does not call the errors endpoint when the rows already explain themselves", async () => {
+    const api = new FakeApi(
+      [{ id: COLLECTOR }],
+      { [COLLECTOR]: [seed] },
+      {},
+      { j_seed: [goldenRow(0)], j_fail: [{ input: canary, error_code: "blocked" }] },
+    );
+    await run(api);
+    expect(api.calls).not.toContain("jobErrors:j_fail");
   });
 });

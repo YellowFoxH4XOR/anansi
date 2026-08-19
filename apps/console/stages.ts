@@ -46,14 +46,14 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
   // snapshot to diff against, which is the normal state of a collector whose
   // archive holds nothing yet. That is a different outcome from a heal that was
   // tried and rejected, and must not be reported as one.
-  const noBaseline = !open && attempts === 0 && rec.last_good_ref == null;
+  const noBaseline = rec.resolution === "undiagnosable" || (!open && attempts === 0 && rec.last_good_ref == null);
   stages.push({
     name: "2 · DIAGNOSE",
     status: rec.prompt ? "done" : open ? "live" : "fail",
     meta: rec.prompt
       ? `auto-generated heal prompt (${rec.prompt.length} chars): "${rec.prompt}"`
       : noBaseline
-        ? "no last-good snapshot to diff against — diagnosis cannot run until one clean run has been archived"
+        ? "nothing to diff yet — no page has both a current capture and an archived last-good. The next clean run archives one; the collector stays watched meanwhile."
         : open
           ? "building evidence pack…"
           : "diagnosis did not complete",
@@ -84,18 +84,33 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
   const failedHeals = rec.heal_attempts.filter((a) => a.verdict?.pass === false).length;
   stages.push({
     name: "5 · PROMOTE (scraper approve)",
-    status: approved ? "done" : awaitingHuman ? "live" : rec.resolution === "quarantined" ? "fail" : open ? "pending" : "fail",
+    // "undiagnosable" is not a failure of this stage: nothing was proposed, so
+    // nothing was rejected. Rendering it red said a promotion had failed and
+    // paged a human, when neither happened.
+    status: approved
+      ? "done"
+      : awaitingHuman
+        ? "live"
+        : rec.resolution === "undiagnosable"
+          ? "pending"
+          : rec.resolution === "quarantined"
+            ? "fail"
+            : open
+              ? "pending"
+              : "fail",
     meta: approved
       ? "gate passed — fix promoted to production"
       : awaitingHuman
         ? "V1 passed but no contract pins this collector — fix left awaiting_approval for a human"
-        : rec.resolution === "quarantined"
-          ? failedHeals > 0
-            ? `${failedHeals} failed heal${failedHeals === 1 ? "" : "s"} — rejected pending fix, human paged`
-            : `quarantined without a heal being attempted · ${rec.credits_spent} heal attempt(s) — human paged`
-          : open
-            ? "awaiting the V1 gate"
-            : "blocked on V1",
+        : rec.resolution === "undiagnosable"
+          ? "not reached — there was nothing to diagnose from, so no fix was proposed. Nothing spent, nobody paged, still watching."
+          : rec.resolution === "quarantined"
+            ? failedHeals > 0
+              ? `${failedHeals} failed heal${failedHeals === 1 ? "" : "s"} — rejected pending fix, human paged`
+              : `quarantined without a heal being attempted · ${rec.credits_spent} heal attempt(s) — human paged`
+            : open
+              ? "awaiting the V1 gate"
+              : "blocked on V1",
   });
 
   // The old sixth stage re-collected every canary after promotion. ANANSI no

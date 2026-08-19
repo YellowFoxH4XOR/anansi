@@ -52,6 +52,10 @@ export type RunRow = {
   sweep_ts?: number;
   job_id?: string;
   error_code?: string;
+  /** A "this job was seen" marker the monitor writes for a job that collected
+   *  nothing. It carries the timestamp but is not a collected row, and counting
+   *  it as one reported an empty run as having returned data. */
+  placeholder?: boolean;
 };
 
 export function jobTrigger(jobId: string): JobTrigger {
@@ -90,7 +94,7 @@ export function jobRows(ledger: readonly JobLedgerEntry[], runs: readonly RunRow
   for (const r of runs) {
     if (!r.job_id) continue;
     const agg = byJob.get(r.job_id) ?? { rows: 0, errors: 0 };
-    agg.rows++;
+    if (!r.placeholder) agg.rows++;
     if (r.error_code) agg.errors++;
     // sweep_ts is the platform job's own finish time under the monitor; ts is
     // the same value for those rows, so either answers "when did it run?".

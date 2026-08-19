@@ -15,9 +15,9 @@
 // cannot dispatch right now is DEFERRED, never dropped.
 
 import { BrightDataApiError, type BrightDataApi, type Collector, type Job } from "../../packages/adapters/brightdata/api.js";
-import type { Contract, RunRecord, SenseResult, Violation } from "../../packages/core/types.js";
+import type { Contract, Route, RunRecord, SenseResult, Violation } from "../../packages/core/types.js";
 import { ROUTE_PRECEDENCE, evaluate } from "../../packages/core/sense/evaluate.js";
-import { classifyJob, isTerminal, jobRoute, rowVolumeSignals, type JobHealth } from "../../packages/core/sense/job-health.js";
+import { classifyJob, isTerminal, jobRoute, requiredFieldsNamedIn, rowVolumeSignals, type JobHealth } from "../../packages/core/sense/job-health.js";
 import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
 import { Store, type MonitorCursor } from "../../packages/adapters/store/index.js";
 import { splitRow, type RawRow } from "../../packages/adapters/brightdata/types.js";
@@ -393,8 +393,37 @@ export class Monitor {
       this.log(`[${name}] job ${job.id}: no dataset to read (${err.message}) — judging it on its job counters alone, which cannot explain a failure`);
     }
 
-    const health = classifyJob(job, log, rows);
+    let health = classifyJob(job, log, rows);
     if (health.outcome === "unknown") return { deferred: "job produced no usable signal yet" };
+
+    // The dataset does not always carry the per-input failures. A scheduled run
+    // with failed_pages=1 and success_rate=0 returned an EMPTY dataset, while the
+    // platform's own export of that same run held
+    // {"input":{...},"error":"Error: price missing"} — so ANANSI reported a run
+    // that had explained itself perfectly as "failed with no row-level error
+    // code", and had nothing to route on. When the counters say a job failed and
+    // no row says why, ask the endpoint whose whole job is to say why.
+    if (health.outcome !== "success" && health.errorCodes.length === 0) {
+      const errors = await api.jobErrors(job.id).catch((err: unknown) => {
+        this.log(`[${name}] job ${job.id}: could not read per-input errors (${(err as Error).message})`);
+        return [] as { url?: string; error?: string }[];
+      });
+      if (errors.length) {
+        // Shaped as dataset rows so everything downstream keeps one row format.
+        rows = [...(rows ?? []), ...errors.map((e) => ({ input: e.url, error: e.error }))];
+        health = classifyJob(job, log, rows);
+        this.log(`[${name}] job ${job.id}: dataset carried no failure, hp_errors explained ${errors.length} input(s)`);
+      }
+    }
+
+    // Read from the RAW rows: splitRow reduces a prose message to the opaque
+    // code `row_error`, and the message is the only place the field name lives.
+    const errorMessages = (rows ?? []).flatMap((r) =>
+      [r.error, r.error_code].filter((v): v is string => typeof v === "string" && v.trim() !== ""),
+    );
+    const namedFields = contract
+      ? [...new Set(errorMessages.flatMap((m) => requiredFieldsNamedIn(m, contract)))]
+      : [];
 
     const ts = health.finishedMs ?? this.now();
     const cursor = store.monitorCursor(name);
@@ -414,6 +443,15 @@ export class Monitor {
       }
     }
 
+    // A per-input error naming a required field is the most specific signal
+    // available — more specific than any counter — so it is carried as a
+    // contract violation on that field, which is what the heal prompt reads.
+    const fieldSignals: Violation[] = namedFields.map((field) => ({
+      signal: "contract",
+      field,
+      detail: `per-input error names required field "${field}" — the page rendered and the parser ran, but the field was absent`,
+    }));
+
     // Volume is the only shape check available when nobody declared a contract
     // — and it is also the only one that fires on an EMPTY result set, because
     // evaluate() has no records to judge and every gate passes vacuously. So a
@@ -427,7 +465,7 @@ export class Monitor {
       sense = out.result;
       nextFlags = out.flags;
     }
-    let merged = mergeJobHealth(health, sense, name, records, volume);
+    let merged = mergeJobHealth(health, sense, name, records, [...volume, ...fieldSignals]);
 
     // Two-strike rule for a failure nothing explains. Routing blind to heal
     // burns AI generations on what is usually a platform hiccup; routing it to
@@ -480,22 +518,49 @@ export class Monitor {
     const withRefs = records.map((r) => (refs[r.url] ? { ...r, snapshot_ref: refs[r.url] } : r));
     await this.recordRun(name, withRefs, {}, job.id, ts, false);
 
+    // "Returned 0 rows" was the one failure that could never be diagnosed:
+    // Diagnose looks for a record carrying a snapshot, and a job with no rows
+    // has no records at all. But the pages are right there — the contract's
+    // canaries were archived a moment ago, and the last clean run archived the
+    // same URLs — so the diff is available even though the scraper produced
+    // nothing. These stand in for Diagnose only; recordRun above has already
+    // written the real (empty) result, and inventing rows in the store would be
+    // the same lie in a worse place.
+    const diagnosable: RunRecord[] = withRefs.length
+      ? withRefs
+      : Object.entries(refs).map(([url, ref]) => ({ url, fields: {}, snapshot_ref: ref, ts }));
+
     // An archive fetch that was itself blocked, 404'd or timed out is a routable
     // fact about the target, not noise: no selector edit repairs a 403, and a
     // dead URL is never healed (ADR-003). Without this the archive's own error
     // taxonomy was computed, logged and then thrown away.
     const archiveCodes = captures.flatMap((c) => (c.error_code ? [c.error_code] : []));
     const archiveRoute = jobRoute(archiveCodes);
-    const route =
-      archiveRoute && ROUTE_PRECEDENCE.indexOf(archiveRoute) < ROUTE_PRECEDENCE.indexOf(merged.route)
-        ? archiveRoute
-        : merged.route;
-    const signals =
-      route === merged.route
-        ? merged.signals
-        : [...merged.signals, { signal: "hard_fail" as const, detail: `archive fetch returned ${[...new Set(archiveCodes)].join(", ")} → ${route} lane` }];
 
-    const incident = { ...merged, route, signals, records: withRefs, snapshot_refs: Object.values(refs) };
+    // Facts that outrank what sense concluded on its own, each carrying the
+    // reason that earned it. Only a strictly more urgent lane may win, so an
+    // override can never soften a verdict — only sharpen it.
+    const overrides: { route: Route; detail: string }[] = [];
+    if (archiveRoute) {
+      overrides.push({ route: archiveRoute, detail: `archive fetch returned ${[...new Set(archiveCodes)].join(", ")} → ${archiveRoute} lane` });
+    }
+    if (namedFields.length) {
+      // routeErrorCode is right to call "Error: price missing" unknown and send
+      // it to retry — a sentence is not a code. But it names a field WE declared
+      // required, which makes it the DOM change heal exists for. Without this a
+      // genuine selector break retried forever and never healed.
+      overrides.push({
+        route: "heal",
+        detail: `per-input error names required contract field(s) ${namedFields.join(", ")} → heal lane`,
+      });
+    }
+    const better = overrides
+      .filter((o) => ROUTE_PRECEDENCE.indexOf(o.route) < ROUTE_PRECEDENCE.indexOf(merged.route))
+      .sort((a, b) => ROUTE_PRECEDENCE.indexOf(a.route) - ROUTE_PRECEDENCE.indexOf(b.route))[0];
+    const route = better?.route ?? merged.route;
+    const signals = better ? [...merged.signals, { signal: "hard_fail" as const, detail: better.detail }] : merged.signals;
+
+    const incident = { ...merged, route, signals, records: diagnosable, snapshot_refs: Object.values(refs) };
     this.log(`[${name}] INCIDENT (${incident.route}) from job ${job.id}: ${incident.signals.map((v) => `${v.signal}${v.field ? `:${v.field}` : ""}`).join(", ")}`);
     const rec = await driveIncident(incident, contract ?? observedContract(collectorId), {
       bd: this.deps.heal,
@@ -562,7 +627,19 @@ export class Monitor {
     // drops the row, and the run that failed hardest is the one the console
     // shows with no finish time at all.
     if (records.length === 0) {
-      await this.deps.store.appendRun({ url: "unknown", fields: {}, ts, scraper: name, healthy, sweep_ts: ts, job_id: jobId } as never);
+      await this.deps.store.appendRun({
+        url: "unknown",
+        fields: {},
+        ts,
+        scraper: name,
+        healthy,
+        sweep_ts: ts,
+        job_id: jobId,
+        // Marked, because it is a trace and not data. Counted as a row it makes
+        // the console report "1 row" for a job whose own incident says the job
+        // returned none — the console contradicting itself in two panels.
+        placeholder: true,
+      } as never);
     }
   }
 

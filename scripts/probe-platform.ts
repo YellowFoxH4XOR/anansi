@@ -64,6 +64,18 @@ async function main(): Promise<void> {
         const err = e as BrightDataApiError;
         console.log(`  ${j.id} dataset → ${err.message}  permanent=${err.permanent ?? "?"}`);
       }
+      // The endpoint that mattered: a failed run's dataset came back empty while
+      // this held the reason. Only asked for on jobs that look failed.
+      const looksFailed = (j.failed_pages ?? 0) > 0 || (log?.fails ?? 0) > 0 || (log?.success_rate ?? 1) < 1;
+      if (looksFailed) {
+        const errs = await api.jobErrors(j.id).catch((e: unknown) => {
+          console.log(`  ${j.id} hp_errors → ${(e as Error).message}`);
+          return [] as { url?: string; error?: string }[];
+        });
+        console.log(`  ${j.id} hp_errors → ${errs.length} error(s)${errs.length ? `: ${JSON.stringify(errs.slice(0, 3))}` : ""}`);
+        if (errs.length) rows = [...(rows ?? []), ...errs.map((e) => ({ input: e.url, error: e.error }))];
+      }
+
       const health = classifyJob(j, log, rows);
       console.log(`  ${j.id} VERDICT → outcome=${health.outcome} route=${health.route ?? "—"} unexplained=${health.unexplained} totals=${JSON.stringify(health.totals)}`);
     }

@@ -7,7 +7,7 @@
 // one of them.
 
 import type { Job, JobLog } from "../../adapters/brightdata/api.js";
-import type { Route, Violation } from "../types.js";
+import type { Contract, Route, Violation } from "../types.js";
 import { ROUTE_PRECEDENCE } from "./evaluate.js";
 import { routeErrorCode } from "./triage.js";
 
@@ -189,4 +189,28 @@ export function isStale(
 ): boolean {
   if (!schedule || lastFinishMs == null) return false;
   return nowMs - lastFinishMs > schedule.medianGapMs * STALE_INTERVAL_MULTIPLE;
+}
+
+/** Required contract fields named by a per-input error message.
+ *
+ *  Bright Data reports some collection failures as prose — "Error: price
+ *  missing" — and routeErrorCode is right to call a sentence unknown and refuse
+ *  to spend a heal on it. But when that sentence names a field the contract
+ *  declares REQUIRED, it stops being an unparsed string and becomes the most
+ *  specific signal available: the page loaded, the parser ran, and a field we
+ *  declared must exist was not there. That is the DOM change heal exists for,
+ *  and without this it routed to retry and never healed.
+ *
+ *  Matched on word boundaries so `price` does not fire on `sale_price_currency`,
+ *  and only against declared field names, so an arbitrary message cannot invent
+ *  a lane for itself. */
+export function requiredFieldsNamedIn(message: string, contract: Contract): string[] {
+  const text = message.toLowerCase();
+  return Object.entries(contract.fields)
+    .filter(([, spec]) => spec.required)
+    .map(([name]) => name)
+    .filter((name) => {
+      const escaped = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`\\b${escaped}\\b`).test(text);
+    });
 }

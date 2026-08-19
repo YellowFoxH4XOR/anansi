@@ -118,7 +118,7 @@ export type IncidentRecord = {
   /** `observed` is a failure ANANSI recorded and deliberately did not act on —
    *  the retry lane. A blank resolution used to mean this, which read in the
    *  console as an incident still in flight. */
-  resolution?: "promoted" | "quarantined" | "rolled_back" | "infra" | "dead" | "observed";
+  resolution?: "promoted" | "quarantined" | "rolled_back" | "infra" | "dead" | "observed" | "undiagnosable";
   credits_spent: number;
   wall_ms?: number;
   approved_by?: "gate" | "human";

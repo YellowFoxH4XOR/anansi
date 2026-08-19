@@ -180,8 +180,28 @@ export class BrightDataApi {
     return this.get<JobLog>(`/dca/log/${encodeURIComponent(jobId)}`);
   }
 
-  /** The collected rows. Per-input failures arrive here as `error`/`error_code`
-   *  on the row itself, which is why no separate errors endpoint is needed. */
+  /** Per-input failures for one job.
+   *
+   *  This exists because the assumption it replaces was wrong. We believed
+   *  failures rode along on the dataset rows, so no errors endpoint was needed.
+   *  In production a scheduled run failed with `failed_pages=1, success_rate=0`
+   *  and /dca/dataset returned an EMPTY array, while the dashboard's own export
+   *  of the same run contained
+   *  `{"input":{...},"error":"Error: price missing"}`. ANANSI therefore reported
+   *  a run that had explained itself perfectly as "failed with no row-level
+   *  error code" — and could not route it.
+   *
+   *  Shaped into dataset rows (`input` + `error`) by the caller, so everything
+   *  downstream keeps one row format. */
+  async jobErrors(jobId: string): Promise<{ url?: string; error?: string }[]> {
+    const body = await this.get<{ errors?: { url?: string; error?: string }[] }>(
+      `/dca/jobs/${encodeURIComponent(jobId)}/hp_errors`,
+    );
+    return body.errors ?? [];
+  }
+
+  /** The collected rows. Some per-input failures ride along here as
+   *  `error`/`error_code`; the ones that do not are in jobErrors() above. */
   async dataset<T = Record<string, unknown>>(collectionId: string): Promise<T[] | { status: string }> {
     const body = await this.get<T[] | { status: string }>("/dca/dataset", { id: collectionId });
     return body;
