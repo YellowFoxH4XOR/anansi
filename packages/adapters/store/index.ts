@@ -260,7 +260,11 @@ export class Store {
   }
 
   async deferJob(jobId: string, collector: string, ts: number, reason: string, job?: Job): Promise<void> {
-    await this.putLedger({ job_id: jobId, collector, ts, state: "deferred", defer_reason: reason, ...(job ? { job } : {}) });
+    // Keep the FIRST time this job was seen. Restamping it on every re-defer
+    // would let a job that can never be handled outlive the retention window it
+    // is pruned by, which is how one stuck job becomes a permanent one.
+    const first = this.jobLedger().find((e) => e.job_id === jobId)?.ts ?? ts;
+    await this.putLedger({ job_id: jobId, collector, ts: first, state: "deferred", defer_reason: reason, ...(job ? { job } : {}) });
   }
 
   deferredJobs(collector: string): JobLedgerEntry[] {

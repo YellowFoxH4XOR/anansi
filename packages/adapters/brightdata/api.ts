@@ -71,6 +71,37 @@ export type ListJobsOpts = {
 
 export type Fetcher = typeof fetch;
 
+/** An API failure that kept its status and its body.
+ *
+ *  The body is the whole diagnostic. `/dca/collector/jobs` answers 400 with
+ *  "Missing collector parameter" — a one-line fix that a bare "HTTP 400" hides
+ *  completely — and the same is true of every other 4xx this client can meet.
+ *  Callers also need `permanent` to decide between retrying and settling: a
+ *  monitor that defers a permanently-rejected job re-offers it on every poll,
+ *  forever. */
+export class BrightDataApiError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(`${path} → HTTP ${status}${body ? `: ${body}` : ""}`);
+    this.name = "BrightDataApiError";
+  }
+
+  /** 4xx means the request itself will never be accepted — except 408/429,
+   *  which are "not now" rather than "not ever". */
+  get permanent(): boolean {
+    return this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429;
+  }
+}
+
+/** Trims a body to something a log line can carry without becoming the log. */
+function snippet(text: string, max = 300): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
 export class BrightDataApi {
   constructor(
     private apiKey: string,
@@ -89,9 +120,18 @@ export class BrightDataApi {
       headers: { Authorization: `Bearer ${this.apiKey}` },
     });
     if (!res.ok) {
-      // 401 is a revoked key, 404 an expired job — both are operator-actionable,
-      // so the status travels with the message rather than being swallowed.
-      throw new Error(`${path} → HTTP ${res.status}`);
+      // 401 is a revoked key, 404 an expired job, 400 usually a parameter the
+      // docs describe wrongly — all operator-actionable, and none of them
+      // diagnosable from the status alone.
+      // The status must survive a body that cannot be read: losing "HTTP 401"
+      // because the diagnostic extra failed would be a worse error than none.
+      let body = "";
+      try {
+        body = snippet(await res.text());
+      } catch {
+        body = "";
+      }
+      throw new BrightDataApiError(path, res.status, body);
     }
     return (await res.json()) as T;
   }

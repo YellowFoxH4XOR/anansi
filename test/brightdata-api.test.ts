@@ -3,11 +3,11 @@
 // request shapes and the response-envelope tolerance.
 
 import { describe, expect, it } from "vitest";
-import { BrightDataApi } from "../packages/adapters/brightdata/api.js";
+import { BrightDataApi, BrightDataApiError } from "../packages/adapters/brightdata/api.js";
 
 type Call = { url: string; headers: Record<string, string> };
 
-function stubFetch(body: unknown, status = 200) {
+function stubFetch(body: unknown, status = 200, text?: string) {
   const calls: Call[] = [];
   const impl = (async (input: string | URL | Request, init?: RequestInit) => {
     calls.push({
@@ -18,6 +18,7 @@ function stubFetch(body: unknown, status = 200) {
       ok: status >= 200 && status < 300,
       status,
       json: async () => body,
+      text: async () => text ?? JSON.stringify(body),
     } as Response;
   }) as typeof fetch;
   return { impl, calls };
@@ -100,6 +101,32 @@ describe("BrightDataApi", () => {
   it("surfaces the HTTP status so 401 and 404 stay actionable", async () => {
     const { impl } = stubFetch({}, 401);
     await expect(new BrightDataApi("k", impl).jobLog("j_1")).rejects.toThrow("HTTP 401");
+  });
+
+  it("carries the response body, because the status alone diagnoses nothing", async () => {
+    // The body is where the platform actually explains itself: the jobs endpoint
+    // answers 400 with "Missing collector parameter", a one-line fix that a bare
+    // "HTTP 400" hides completely.
+    const { impl } = stubFetch({}, 400, "Missing collector parameter");
+    await expect(new BrightDataApi("k", impl).jobs({ collector: "c", fromDate: "a", toDate: "b" })).rejects.toThrow(
+      "Missing collector parameter",
+    );
+  });
+
+  it("still reports the status when the body cannot be read", async () => {
+    // Losing "HTTP 401" because the diagnostic extra failed would be a worse
+    // error than no extra at all.
+    const impl = (async () => ({ ok: false, status: 401, json: async () => ({}) }) as Response) as typeof fetch;
+    await expect(new BrightDataApi("k", impl).jobLog("j_1")).rejects.toThrow("HTTP 401");
+  });
+
+  it("separates a rejection that will never succeed from one that might", async () => {
+    // A monitor that defers a permanently-rejected job re-offers it on every
+    // poll forever; one that settles a 429 loses a readable job.
+    const permanent = [400, 401, 403, 404].map((s) => new BrightDataApiError("/p", s, "").permanent);
+    const transient = [408, 429, 500, 502, 503].map((s) => new BrightDataApiError("/p", s, "").permanent);
+    expect(permanent).toEqual([true, true, true, true]);
+    expect(transient).toEqual([false, false, false, false, false]);
   });
 
   it("reads a job log and a dataset by id", async () => {

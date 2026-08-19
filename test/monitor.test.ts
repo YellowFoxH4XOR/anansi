@@ -15,6 +15,7 @@ import { Store } from "../packages/adapters/store/index.js";
 import { TemplateLlm } from "../packages/adapters/llm/index.js";
 import { FakeBrightData } from "../packages/adapters/brightdata/fake.js";
 import { Monitor, mergeJobHealth, newestJob, observedContract, pollWindow, rowsToRecords } from "../apps/agent/monitor.js";
+import { BrightDataApiError } from "../packages/adapters/brightdata/api.js";
 import type { PageCapture, PageFetcher } from "../apps/agent/archive.js";
 import type { BrightDataApi, Collector, Job, JobLog } from "../packages/adapters/brightdata/api.js";
 import type { JobHealth } from "../packages/core/sense/job-health.js";
@@ -35,7 +36,7 @@ class FakeApi {
     private collectorList: Collector[],
     private jobsByCollector: Record<string, Job[]>,
     private logs: Record<string, JobLog> = {},
-    private datasets: Record<string, Record<string, unknown>[] | { status: string }> = {},
+    private datasets: Record<string, Record<string, unknown>[] | { status: string } | Error> = {},
   ) {}
 
   async collectors(): Promise<Collector[]> {
@@ -55,7 +56,11 @@ class FakeApi {
 
   async dataset(id: string): Promise<Record<string, unknown>[] | { status: string }> {
     this.calls.push(`dataset:${id}`);
-    return this.datasets[id] ?? [];
+    const entry = this.datasets[id];
+    // A table entry that IS an error is how a test says "the platform rejects
+    // this one" — preview and test runs have no dataset to read.
+    if (entry instanceof Error) throw entry;
+    return entry ?? [];
   }
 }
 
@@ -732,5 +737,56 @@ describe("the job verdict and the contract verdict are unioned, not chosen betwe
     // A success carrying stale signals must not manufacture an incident.
     const out = mergeJobHealth(health({ outcome: "success" }), { kind: "healthy", warnings: [] }, "s", []);
     expect(out.kind).toBe("healthy");
+  });
+});
+
+describe("a job with no dataset is settled, never retried forever", () => {
+  // Observed in production: /dca/dataset answers 400 for a preview/test run,
+  // which has no delivered dataset at all. That rejection will never stop
+  // happening, so deferring it re-offered the same job on every 60s poll
+  // indefinitely — the agent's only visible activity was one repeating error.
+  const seed: Job = { id: "j_seed", finished: "2025-08-19T09:00:00Z", data_lines: 4 };
+  const noDataset: Job = { id: "vj_preview", finished: "2025-08-19T11:00:00Z", data_lines: 19, failed_pages: 15 };
+
+  function apiWith(datasetResult: Error | Record<string, unknown>[]) {
+    return new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [seed] }, {}, { j_seed: goldenRows(), vj_preview: datasetResult });
+  }
+
+  async function pollTwice(api: FakeApi, logs: string[]) {
+    const monitor = monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]), logs });
+    await monitor.pollCollector(COLLECTOR);
+    pushJob(api, COLLECTOR, noDataset);
+    await monitor.pollCollector(COLLECTOR);
+    await monitor.pollCollector(COLLECTOR);
+  }
+
+  it("handles the job once and does not offer it again", async () => {
+    const logs: string[] = [];
+    const api = apiWith(new BrightDataApiError("/dca/dataset", 400, "invalid id"));
+    await pollTwice(api, logs);
+
+    expect(store.jobLedgerState("vj_preview")).toBe("handled");
+    // Two polls after it appeared, but only one dataset read: the second poll
+    // skipped a job the ledger already settled.
+    expect(api.calls.filter((c) => c === "dataset:vj_preview")).toHaveLength(1);
+  });
+
+  it("still judges it, from the job counters it does have", async () => {
+    const logs: string[] = [];
+    await pollTwice(apiWith(new BrightDataApiError("/dca/dataset", 400, "invalid id")), logs);
+
+    // 15 failed pages is a real failure and must not be silently dropped just
+    // because the rows explaining it are unreadable.
+    expect(store.auditLog().some((e) => e.event === "dataset_unavailable" && e.job_id === "vj_preview")).toBe(true);
+    expect(logs.some((l) => l.includes("no dataset to read") && l.includes("HTTP 400"))).toBe(true);
+    expect(store.auditLog().some((e) => e.event === "unexplained_failure" && e.job_id === "vj_preview")).toBe(true);
+  });
+
+  it("still defers when the rejection might succeed later", async () => {
+    // 429 and 5xx are "not now", not "not ever" — settling those would discard
+    // a job that was perfectly readable a minute later.
+    const logs: string[] = [];
+    await pollTwice(apiWith(new BrightDataApiError("/dca/dataset", 429, "slow down")), logs);
+    expect(store.jobLedgerState("vj_preview")).toBe("deferred");
   });
 });

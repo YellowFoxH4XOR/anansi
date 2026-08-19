@@ -21,6 +21,9 @@ COPY packages/core/ ./packages/core/
 COPY packages/adapters/ ./packages/adapters/
 COPY apps/agent/ ./apps/agent/
 COPY contracts/ ./contracts/
+# Diagnostics belong where the credential already is: `npm run probe` is a
+# read-only dump of what the platform actually returns for this account.
+COPY scripts/ ./scripts/
 
 # ANANSI_ADAPTER selects the HEAL seam only: real (CLI) or fake (offline).
 # Reading job history always goes over REST and needs BRIGHTDATA_API_KEY.

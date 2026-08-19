@@ -14,7 +14,7 @@
 // regenerated the work. A monitor cannot: a job is a one-time fact, so work it
 // cannot dispatch right now is DEFERRED, never dropped.
 
-import type { BrightDataApi, Collector, Job } from "../../packages/adapters/brightdata/api.js";
+import { BrightDataApiError, type BrightDataApi, type Collector, type Job } from "../../packages/adapters/brightdata/api.js";
 import type { Contract, RunRecord, SenseResult, Violation } from "../../packages/core/types.js";
 import { ROUTE_PRECEDENCE, evaluate } from "../../packages/core/sense/evaluate.js";
 import { classifyJob, isTerminal, jobRoute, rowVolumeSignals, type JobHealth } from "../../packages/core/sense/job-health.js";
@@ -337,20 +337,35 @@ export class Monitor {
     const contract = this.deps.contracts.get(collectorId);
 
     const log = await api.jobLog(job.id).catch(() => undefined);
-    // The job id is the collection id for /dca/dataset.
-    const dataset = await api.dataset(job.id);
-    if (!Array.isArray(dataset)) {
-      // Rows land after the job finishes. Reading "not ready" as "no errors" is
-      // a silent false negative, so this waits instead of judging.
-      return { deferred: `dataset ${dataset.status}` };
+
+    // The job id is the collection id for /dca/dataset — for jobs that HAVE a
+    // dataset. Preview and test runs do not: the endpoint rejects them outright,
+    // and a rejection that will never stop happening must not be deferred, or
+    // the job is re-offered on every poll for the rest of the agent's life.
+    // Judging it from its counters alone is worse evidence, not no evidence: the
+    // row-level codes are what carry a routing lane, so a job read this way is
+    // unexplained by construction and the two-strike rule below applies to it.
+    let rows: Record<string, unknown>[] | undefined;
+    try {
+      const dataset = await api.dataset(job.id);
+      if (!Array.isArray(dataset)) {
+        // Rows land after the job finishes. Reading "not ready" as "no errors"
+        // is a silent false negative, so this waits instead of judging.
+        return { deferred: `dataset ${dataset.status}` };
+      }
+      rows = dataset;
+    } catch (err) {
+      if (!(err instanceof BrightDataApiError) || !err.permanent) throw err;
+      await store.audit({ event: "dataset_unavailable", scraper: name, job_id: job.id, status: err.status, detail: err.body });
+      this.log(`[${name}] job ${job.id}: no dataset to read (${err.message}) — judging it on its job counters alone, which cannot explain a failure`);
     }
 
-    const health = classifyJob(job, log, dataset);
+    const health = classifyJob(job, log, rows);
     if (health.outcome === "unknown") return { deferred: "job produced no usable signal yet" };
 
     const ts = health.finishedMs ?? this.now();
     const cursor = store.monitorCursor(name);
-    const { records } = rowsToRecords(dataset, ts);
+    const { records } = rowsToRecords(rows ?? [], ts);
 
     // A contract whose canaries match none of the collected URLs is a contract
     // that silently does nothing: evaluate() joins goldens by exact URL, so a
