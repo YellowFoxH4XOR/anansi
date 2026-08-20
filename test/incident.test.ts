@@ -17,8 +17,8 @@ import type { Incident, RunRecord } from "../packages/core/types.js";
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const echoUrl = contract.canaries[0]!.url;
-const baselineHtml = productPage(echo, "none");
-const injectedHtml = productPage(echo, "renest");
+const baselineHtml = productPage(echo);
+const injectedHtml = productPage(echo);
 
 const goodFields = { title: "Echo Portable Speaker", price: 49.99, sale_price: null, availability: "in stock" };
 

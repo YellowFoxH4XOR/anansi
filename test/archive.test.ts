@@ -66,7 +66,7 @@ describe("archive fetch · transport failures map onto the error taxonomy", () =
   });
 
   it("captures a healthy page at full confidence", async () => {
-    const cap = await fetcher(productPage(echo, "none"))(URL_ECHO);
+    const cap = await fetcher(productPage(echo))(URL_ECHO);
     expect(cap.status).toBe(200);
     expect(cap.low_confidence).toBe(false);
     expect(cap.error_code).toBeUndefined();
@@ -87,7 +87,7 @@ describe("archive fetch · a plain GET is not browser rendering", () => {
 
   it("detects the challenge markers a proxy would have got past", () => {
     expect(looksLikeChallenge("<h1>Access Denied</h1>")).toBe(true);
-    expect(looksLikeChallenge(productPage(echo, "none"))).toBe(false);
+    expect(looksLikeChallenge(productPage(echo))).toBe(false);
   });
 });
 
@@ -97,7 +97,7 @@ describe("archivePages", () => {
   it("stores each page and returns a ref per url", async () => {
     const s = store();
     await s.init();
-    const { refs } = await archivePages([URL_ECHO], s, fetcher(productPage(echo, "none")), {
+    const { refs } = await archivePages([URL_ECHO], s, fetcher(productPage(echo)), {
       maxUrls: 8,
       floorMs: 1000,
     });
@@ -125,7 +125,7 @@ describe("archivePages", () => {
     const asked: string[] = [];
     const fetchPage = async (url: string) => {
       asked.push(url);
-      return { url, html: productPage(echo, "none"), status: 200, bytes: 9000, low_confidence: false, fetched_ms: 1000 };
+      return { url, html: productPage(echo), status: 200, bytes: 9000, low_confidence: false, fetched_ms: 1000 };
     };
     const seen = new Map<string, number>();
     const opts = { maxUrls: 8, floorMs: 60_000 };
@@ -140,7 +140,7 @@ describe("archivePages", () => {
     const asked: string[] = [];
     const fetchPage = async (url: string) => {
       asked.push(url);
-      return { url, html: productPage(echo, "none"), status: 200, bytes: 9000, low_confidence: false, fetched_ms: 1000 };
+      return { url, html: productPage(echo), status: 200, bytes: 9000, low_confidence: false, fetched_ms: 1000 };
     };
     const seen = new Map<string, number>();
     await archivePages([URL_ECHO], s, fetchPage, { maxUrls: 8, floorMs: 60_000 }, seen, () => 1000);
@@ -191,7 +191,7 @@ describe("archive · a low-confidence capture is withheld, not merely labelled",
   it("still archives a page it can trust", async () => {
     const s = store();
     await s.init();
-    const { refs } = await archivePages([URL_ECHO], s, fetcher(productPage(echo, "none")), { maxUrls: 8, floorMs: 0 });
+    const { refs } = await archivePages([URL_ECHO], s, fetcher(productPage(echo)), { maxUrls: 8, floorMs: 0 });
     expect(Object.keys(refs)).toEqual([URL_ECHO]);
   });
 });

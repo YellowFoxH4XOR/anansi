@@ -31,56 +31,9 @@ describe("Mutation Lab", () => {
     expect(r.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("M1 renames the class", async () => {
-    await get("/__control?mutate=rename");
-    const r = await get("/product/echo-speaker");
-    expect(r.body).toContain('class="price-now">$49.99');
-    expect(r.body).not.toContain('class="price">$49.99');
-  });
 
-  it("M2 breaks exactly ONE product and leaves the others byte-identical", async () => {
-    // The whole point of this scenario: a job that mostly succeeds. If it broke
-    // the catalogue it would be M1 with extra steps, and fill rate would never
-    // be the signal that catches it.
-    await get("/__control?mutate=none"); // tests share Lab state and run in order
-    const baseline = await Promise.all(
-      ["aurora-lamp", "echo-speaker", "tidal-bottle"].map(async (sku) => (await get(`/product/${sku}`)).body),
-    );
 
-    await get("/__control?mutate=salevariant");
-    const lamp = await get("/product/aurora-lamp");
-    expect(lamp.status).toBe(200);
-    expect(lamp.body).toContain('class="price-final"');
-    expect(lamp.body).not.toContain('class="price"');
 
-    // Untouched, to the byte.
-    expect((await get("/product/echo-speaker")).body).toBe(baseline[1]);
-    expect((await get("/product/tidal-bottle")).body).toBe(baseline[2]);
-
-    // And the listing carries the same split: 3 cards with .price, one without.
-    const listing = (await get("/")).body;
-    expect((listing.match(/class="price"/g) ?? []).length).toBe(3);
-    expect(listing).toContain('class="price-final"');
-  });
-
-  it("M4 replaces every semantic class with a build hash", async () => {
-    await get("/__control?mutate=hashed");
-    const r = await get("/product/echo-speaker");
-    expect(r.body).toContain('class="Price_value__k39fa">$49.99');
-    expect(r.body).not.toContain('class="price"');
-    expect(r.body).not.toContain('class="title"');
-    // The value is still on the page — only the names it hung on are gone.
-    expect(r.body).toContain("$49.99");
-    expect(r.body).toContain("Echo Portable Speaker");
-  });
-
-  it("M5 changes the price TEXT and nothing else", async () => {
-    await get("/__control?mutate=locale");
-    const r = await get("/product/echo-speaker");
-    // Selector intact, field still fills — the value is what breaks.
-    expect(r.body).toContain('class="price">USD 49,99');
-    expect(r.body).not.toContain("$49.99");
-  });
 
   it("L1 renames the listing tile and leaves the product pages alone", async () => {
     await get("/__control?mutate=cardrename");
@@ -109,12 +62,6 @@ describe("Mutation Lab", () => {
     expect(listing).toContain('data-href="/product/echo-speaker"');
   });
 
-  it("M3 re-nests the price under data-testid", async () => {
-    await get("/__control?mutate=renest");
-    const r = await get("/product/echo-speaker");
-    expect(r.body).toContain('data-testid="price-value">$49.99');
-    expect(r.body).not.toContain('class="price">$49.99');
-  });
 
   it("RESET restores baseline instantly and /__state reports it", async () => {
     await get("/__control?mutate=none");

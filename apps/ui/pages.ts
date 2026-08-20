@@ -31,7 +31,7 @@ export const MUTATIONS: {
   id: Mutation;
   tag: string; // short chip shown on the control panel
   name: string; // display name for the control-panel row
-  series: "reset" | "M" | "L";
+  series: "reset" | "L";
   blurb: string;
   expect: string; // the one-line expected ANANSI response
 }[] = [
@@ -42,46 +42,6 @@ export const MUTATIONS: {
     series: "reset",
     blurb: "Healthy storefront, all selectors stable.",
     expect: "next sweep passes all five signals — fleet returns to HEALTHY.",
-  },
-  {
-    id: "rename",
-    tag: "M1",
-    name: "Rename the class",
-    series: "M",
-    blurb: ".price becomes .price-now → scraper returns null price.",
-    expect: "contract trip (null price) → diagnose names the rename → heal proposes .price-now → verify → promote.",
-  },
-  {
-    id: "salevariant",
-    tag: "M2",
-    name: "One item on sale",
-    series: "M",
-    blurb: "A single product switches to the promotional template: .price becomes .price-final, with .price-was beside it. The other three are untouched.",
-    expect: "the job SUCCEEDS — 3 of 4 rows are perfect. Fill rate falls to 0.75 → contract trips on the one null → heal covers both templates.",
-  },
-  {
-    id: "renest",
-    tag: "M3",
-    name: "Re-nest",
-    series: "M",
-    blurb: "Price moves two levels deeper into span[data-testid=price-value].",
-    expect: "structural diff pins the re-nested subtree → heal retargets via data-testid → verify gates the promotion.",
-  },
-  {
-    id: "hashed",
-    tag: "M4",
-    name: "Build-hashed class names",
-    series: "M",
-    blurb: "A framework rebuild replaces every semantic class with a content hash: .price becomes .Price_value__k39fa. Nothing moved; every name is now meaningless.",
-    expect: "all selectors miss at once → heal must retarget on structure or a stable attribute, because the new names carry nothing to match on.",
-  },
-  {
-    id: "locale",
-    tag: "M5",
-    name: "Localised price format",
-    series: "M",
-    blurb: "The price element is untouched; its TEXT becomes \"USD 49,99\" — currency code, comma decimal. Geo-rendering, a currency switcher, a CDN in another region.",
-    expect: "the selector still matches and the field still fills — the VALUE fails its declared number type → heal fixes the parse, not the selector.",
   },
   {
     id: "cardrename",
@@ -323,76 +283,36 @@ ${body}
 </html>`;
 }
 
-// ─── Mutation-sensitive fragments ────────────────────────────────────────────
+// ─── Fragments ───────────────────────────────────────────────────────────────
 
-/** M2 breaks exactly ONE product, not the catalogue.
- *
- *  This is the shape production drift usually takes: a store does not restyle
- *  every price at once, it ships a promotional template and the items on
- *  promotion start rendering through it. Three rows stay perfect, the job
- *  reports success, and only fill rate notices. Picked as the item that already
- *  carries a sale price, because that is the row a real promo template claims. */
-const SALE_VARIANT_SKU = "aurora-lamp";
-
-/** M4: what a bundler emits when semantic class names go through CSS modules.
- *  Stable across renders on purpose — a hash that changed every request would be
- *  a different failure (and undiagnosable), not this one. */
-const HASHED: Record<string, string> = {
-  price: "Price_value__k39fa",
-  "price-block": "PriceBlock_root__2d7be",
-  title: "Title_heading__8b2c1",
-  availability: "Stock_label__f01d9",
-  product: "Product_layout__aa41c",
-  card: "Card_root__71e0b",
-};
-
-/** Class name as the page would render it under the current mutation. */
-function k(name: string, mutation: Mutation): string {
-  return mutation === "hashed" ? (HASHED[name] ?? name) : name;
-}
-
-/** M5: the same number, rendered for another locale. Currency code instead of a
- *  symbol, comma decimal separator — what a geo-aware CDN or a currency switcher
- *  actually serves. The element and its class are untouched. */
-function moneyFor(value: number, mutation: Mutation): string {
-  return mutation === "locale" ? `USD ${value.toFixed(2).replace(".", ",")}` : money(value);
-}
-
-function priceMarkup(p: Product, mutation: Mutation): string {
+// Product pages no longer mutate. Every scenario now breaks the INDEX, which is
+// stage 1 of the scrape — and the sharp edge of a stage-1 break is precisely
+// that the pages it never reached are still perfect. Keeping a mutation here
+// would blunt that: a run could fail for two reasons at once and the demo could
+// not say which.
+function priceMarkup(p: Product): string {
   const shown = p.sale_price ?? p.price;
-  const amount = moneyFor(shown, mutation);
-  const was = p.sale_price ? `<span class="was">${moneyFor(p.price, mutation)}</span>` : "";
-
-  if (mutation === "salevariant" && p.sku === SALE_VARIANT_SKU) {
-    // The promotional template: no .price anywhere on this one item.
-    return `<span class="price-was">${money(p.price)}</span><span class="price-final">${money(shown)}</span>`;
-  }
-  if (mutation === "rename") {
-    return `<span class="price-now">${amount}</span>${was}`;
-  }
-  if (mutation === "renest") {
-    return `<div class="pricing"><div class="current"><span data-testid="price-value">${amount}</span></div>${was ? `<div class="previous">${was}</div>` : ""}</div>`;
-  }
-  return `<span class="${k("price", mutation)}">${amount}</span>${was}`;
+  const was = p.sale_price ? `<span class="was">${money(p.price)}</span>` : "";
+  return `<span class="price">${money(shown)}</span>${was}`;
 }
 
 // ─── Pages ───────────────────────────────────────────────────────────────────
 
-export function productPage(p: Product, mutation: Mutation): string {
+export function productPage(p: Product): string {
   const save = p.sale_price ? ` <span class="save-chip">Save ${savePct(p)}%</span>` : "";
   const inStock = p.availability === "in stock";
   const inner = `<nav class="crumbs"><a href="/">Shop</a><span>/</span><a href="/">${p.category}</a><span>/</span><b>${p.title}</b></nav>
-<div class="${k("product", mutation)}" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
+<div class="product" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
   <div class="gallery">
     <span class="hero-emoji" role="img" aria-label="${p.title}">${p.emoji}</span>
     <span class="gallery-note">Ref. ${p.sku} · studio photograph</span>
   </div>
   <div class="details">
     <div class="kicker">${p.category}</div>
-    <h1 class="${k("title", mutation)}">${p.title}</h1>
-    <div class="${k("price-block", mutation)}">
-      ${priceMarkup(p, mutation)}
-      <span class="${k("availability", mutation)}">${p.availability}</span>${save}
+    <h1 class="title">${p.title}</h1>
+    <div class="price-block">
+      ${priceMarkup(p)}
+      <span class="availability">${p.availability}</span>${save}
     </div>
     <p class="description">${p.description}</p>
     <button class="cart" type="button"${inStock ? "" : " disabled"}>${inStock ? "Add to basket" : "Sold out — notify me"}</button>
@@ -413,7 +333,7 @@ export function listingPage(mutation: Mutation): string {
   // touches the product pages — which is the point. A stage-1 break collects
   // NOTHING while every selector on the pages it never reached still works.
   const shown = mutation === "paginate" ? PRODUCTS.slice(0, 2) : PRODUCTS;
-  const cardClass = mutation === "cardrename" ? "product-tile" : k("card", mutation);
+  const cardClass = mutation === "cardrename" ? "product-tile" : "card";
   const cards = shown.map((p) => {
     const flag = p.availability === "out of stock"
       ? `<span class="flag flag-oos">Sold out</span>`
@@ -432,8 +352,8 @@ export function listingPage(mutation: Mutation): string {
     <div class="thumb">${p.emoji}${flag}</div>
     <div class="card-body">
       <div class="kicker">${p.category}</div>
-      <h2 class="${k("title", mutation)}">${p.title}</h2>
-      <div class="buy-row">${priceMarkup(p, mutation)}<span class="${k("availability", mutation)}">${p.availability}</span></div>
+      <h2 class="title">${p.title}</h2>
+      <div class="buy-row">${priceMarkup(p)}<span class="availability">${p.availability}</span></div>
     </div>
   </a>
 </div>`;
@@ -479,7 +399,6 @@ function controlRow(m: (typeof MUTATIONS)[number], current: Mutation): string {
 
 export function controlPage(current: Mutation): string {
   const reset = MUTATIONS.filter((m) => m.series === "reset").map((m) => controlRow(m, current)).join("\n");
-  const mRows = MUTATIONS.filter((m) => m.series === "M").map((m) => controlRow(m, current)).join("\n");
   const lRows = MUTATIONS.filter((m) => m.series === "L").map((m) => controlRow(m, current)).join("\n");
   const stateLabel = current === "none" ? "BASELINE" : current.toUpperCase();
   return `<!doctype html>
@@ -578,9 +497,7 @@ export function controlPage(current: Mutation): string {
 <main>
   <p class="lede">Every storefront page re-reads mutation state <b>on every request</b> — a fire lands instantly, no deploy, no cache. Fire a mutation, run a sweep, watch ANANSI respond.</p>
 ${reset}
-  <div class="ghead"><span class="gname">M-SERIES · PRODUCT PAGE</span><span class="gdesc">stage 2 breaks — the row is collected but a field is wrong or missing</span></div>
-${mRows}
-  <div class="ghead"><span class="gname">L-SERIES · INDEX PAGE</span><span class="gdesc">stage 1 breaks — discovery finds the wrong links, so rows are never collected at all</span></div>
+  <div class="ghead"><span class="gname">L-SERIES · INDEX PAGE</span><span class="gdesc">discovery breaks — stage 1 hands stage 2 the wrong links, or none, and the product pages stay perfect</span></div>
 ${lRows}
 </main>
 <footer>deep-link any scenario: <code>/__control?mutate=&lt;id&gt;</code> · state lives in KV · <code>Cache-Control: no-store</code> everywhere</footer>

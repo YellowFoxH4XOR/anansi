@@ -51,11 +51,13 @@ export function createLabApp(kv: Kv): Express {
     res.send(listingPage(await state()));
   });
 
-  app.get("/product/:sku", async (req, res) => {
-    const m = await state();
+  // Deliberately does not read mutation state. A product page is stage 2's
+  // target and never mutates: the point of every scenario is that discovery
+  // broke while the pages it never reached stayed perfect.
+  app.get("/product/:sku", (req, res) => {
     const p = PRODUCTS.find((x) => x.sku === req.params.sku);
     if (!p) return res.status(404).send("Not found");
-    res.send(productPage(p, m));
+    res.send(productPage(p));
   });
 
   return app;

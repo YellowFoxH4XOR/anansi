@@ -72,11 +72,11 @@ without one.
    `ANANSI monitor: 1 pinned contract(s), heal adapter=real — Bright Data owns the schedule`.
 3. Open the console. Every scraper on the account appears on the fleet board
    without a config edit; `lab-storefront` is the one a contract pins.
-4. Open `https://lab.<your-domain>/__control` and fire **M2 · One item on sale**.
+4. Open `https://lab.<your-domain>/__control` and fire **L1 · Listing tile renamed**.
 5. On Bright Data's **next scheduled run**, the console opens an incident,
    diagnoses it, runs the gate and promotes the fix. Note the run reports
-   SUCCESS — three of four products are perfect — and the incident opens anyway,
-   on the one row that came back null.
+   SUCCESS having collected nothing at all — discovery found no links, so the
+   product pages were never visited and every selector on them still works.
    Detection is bounded by that schedule, not by anything ANANSI controls.
 
 ## Offline mode

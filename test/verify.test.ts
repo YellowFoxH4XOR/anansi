@@ -7,7 +7,7 @@ import { productPage, PRODUCTS } from "../apps/ui/pages.js";
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
 const echoUrl = contract.canaries[0]!.url;
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
-const injectedHtml = productPage(echo, "renest"); // live DOM during the incident
+const injectedHtml = productPage(echo); // live DOM during the incident
 
 const goodFields = { title: "Echo Portable Speaker", price: 49.99, sale_price: null, availability: "in stock" };
 

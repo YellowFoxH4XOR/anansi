@@ -3,17 +3,17 @@ import { normalizeHtml } from "../packages/core/diagnose/normalize.js";
 import { diffHtml, locateValue } from "../packages/core/diagnose/diff.js";
 import { buildEvidence } from "../packages/core/diagnose/evidence.js";
 import { buildPrompt, PROMPT_MAX } from "../packages/core/diagnose/prompt.js";
-import { productPage, PRODUCTS } from "../apps/ui/pages.js";
+import { listingPage, productPage, PRODUCTS } from "../apps/ui/pages.js";
 import { parseContract } from "../packages/core/sense/contract.js";
 import { readFileSync } from "node:fs";
 import type { Incident } from "../packages/core/types.js";
 
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
-const baseline = productPage(echo, "none");
-const renamed = productPage(echo, "rename");
-const renested = productPage(echo, "renest");
-const hashed = productPage(echo, "hashed");
-const localised = productPage(echo, "locale");
+// Every scenario breaks the INDEX now, so that is what Diagnose diffs.
+const baseline = listingPage("none");
+const renamed = listingPage("cardrename");
+const paginated = listingPage("paginate");
+const jsLinks = listingPage("jslinks");
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
 const echoUrl = contract.canaries[0]!.url;
 
@@ -33,46 +33,37 @@ describe("normalize", () => {
 });
 
 describe("diff", () => {
-  it("M1: reports the removed .price and added .price-now, collapsed to the smallest subtree", () => {
+  it("L1: reports the renamed listing tile, collapsed to the smallest subtree", () => {
     const d = diffHtml(baseline, renamed);
-    expect(d.removed.some((c) => c.path.endsWith("span.price"))).toBe(true);
-    expect(d.added.some((c) => c.path.endsWith("span.price-now"))).toBe(true);
+    expect(d.removed.some((c) => c.path.includes("div.card"))).toBe(true);
+    expect(d.added.some((c) => c.path.includes("div.product-tile"))).toBe(true);
   });
 
-  it("M3: reports the price re-nested under data-testid", () => {
-    const d = diffHtml(baseline, renested);
-    expect(d.removed.some((c) => c.path.endsWith("span.price"))).toBe(true);
-    expect(d.added.some((c) => c.path.includes("div.pricing"))).toBe(true);
+  it("L2: reports the tiles that stopped rendering", () => {
+    const d = diffHtml(baseline, paginated);
+    // Two of four cards are gone, and a Load more control appeared.
+    expect(d.removed.length).toBeGreaterThan(0);
+    expect(paginated).toContain("load-more");
   });
 
-  it("M4: the whole subtree reads as replaced, so the diff alone cannot name the field", () => {
-    // Every class changes at once, so the smallest subtree covering the change
-    // IS the product container — the diff degrades to "this entire block is
-    // different", which is true and nearly useless. This is the case that makes
-    // value_locations load-bearing rather than decorative: the diff cannot say
-    // where the price went, and locating the known-good value can.
-    const d = diffHtml(baseline, hashed);
-    expect(d.removed.map((c) => c.path)).toEqual(["html > body > main > div.product"]);
-    expect(d.added.map((c) => c.path)).toEqual(["html > body > main > div.Product_layout__aa41c"]);
-    // A CSS-module hash is stable across renders, so unlike sc-/css- noise it
-    // must survive normalisation — otherwise the rename would be invisible.
-    expect(normalizeHtml(hashed).toString()).toContain("Price_value__k39fa");
-    expect(locateValue(hashed, "$49.99").length).toBeGreaterThan(0);
-  });
-
-  it("M5: nothing moves at all — the DOM is identical and only the text differs", () => {
-    // The teaching case for a diff-only diagnosis: it has nothing to report, and
-    // the break is real. Only the VALUE check can see this one.
-    const d = diffHtml(baseline, localised);
+  it("L3: the DOM diff is EMPTY, and the page is still broken", () => {
+    // The hardest scenario to see, asserted as the limit it is. The diff
+    // compares element paths — tag and class — and L3 changes neither: the
+    // anchors are all present and all still match a.card-link. Only the href
+    // they carry is gone, and a path-based diff cannot express that.
+    //
+    // This is precisely why missingUrls exists. A discovery break need not
+    // disturb the DOM at all; what it disturbs is which pages get collected.
+    const d = diffHtml(baseline, jsLinks);
     expect(d.added).toEqual([]);
     expect(d.removed).toEqual([]);
-    expect(localised).toContain("USD 49,99");
+    expect(jsLinks).toContain('href="#"');
+    expect((jsLinks.match(/class="card-link"/g) ?? []).length).toBe(4);
   });
 
-  it("locateValue finds where the true price still renders", () => {
-    const hits = locateValue(renested, "$49.99");
+  it("locateValue finds a product title on the index", () => {
+    const hits = locateValue(baseline, "Echo Portable Speaker");
     expect(hits.length).toBeGreaterThan(0);
-    expect(hits.some((h) => h.path.includes("div.pricing"))).toBe(true);
   });
 });
 
@@ -82,47 +73,56 @@ describe("evidence → prompt", () => {
     scraper: "lab-storefront",
     route: "heal",
     signals: [
-      { signal: "contract", field: "price", url: echoUrl, detail: "required field price was null" },
+      { signal: "fill_rate", url: echoUrl, detail: "4 page(s) the last good run collected were not collected at all" },
     ],
     records: [],
     snapshot_refs: [],
   };
 
   it("builds an evidence pack naming the moved block and the true value's location", () => {
-    const ev = buildEvidence(incident, contract, baseline, renested);
-    expect(ev.failing_fields).toEqual(["price"]);
-    expect(ev.dom_diff!.added.some((c) => c.path.includes("pricing"))).toBe(true);
-    expect(ev.value_locations.some((l) => l.field === "price" && l.found_at.length > 0)).toBe(true);
+    const ev = buildEvidence(incident, contract, baseline, renamed);
+    // A discovery break names pages, not fields: nothing about a field is
+    // wrong, and claiming otherwise would send the healer looking in the wrong
+    // place.
+    expect(ev.failing_fields).toEqual([]);
+    expect(ev.dom_diff!.added.some((c) => c.path.includes("product-tile"))).toBe(true);
+    // The index still renders every product title, so a known-good value can be
+    // located there — which is what tells the healer the data did not move, the
+    // container did.
+    const withKnown = buildEvidence(incident, contract, baseline, renamed, [], {
+      [echoUrl]: { title: "Echo Portable Speaker" },
+    });
+    expect(withKnown.value_locations.some((l) => l.found_at.length > 0)).toBe(true);
   });
 
   it("prompt stays under the 1000-char CLI cap and cites the located change", () => {
-    const ev = buildEvidence(incident, contract, baseline, renested);
+    const ev = buildEvidence(incident, contract, baseline, renamed);
     const p = buildPrompt(ev);
     expect(p.length).toBeLessThanOrEqual(PROMPT_MAX);
-    expect(p).toContain("price");
-    expect(p.toLowerCase()).toContain("pricing");
+    expect(p.toLowerCase()).toContain("tile");
+    expect(p.toLowerCase()).toContain("page");
   });
 
   it("diagnoses with no baseline page at all, from known-good values alone", () => {
     // The majority case: Studio's HTML tag is opt-in, so most collectors have no
     // historical page anywhere. Requiring one confined healing to the few that do.
-    const ev = buildEvidence(incident, contract, undefined, renested, [], {
-      [contract.canaries[0]!.url]: { price: 49.99, title: "Echo Portable Speaker" },
+    const ev = buildEvidence(incident, contract, undefined, renamed, [], {
+      [echoUrl]: { title: "Echo Portable Speaker" },
     });
 
     expect(ev.dom_diff).toBeUndefined();
     // The line the healer can actually act on survives the loss of the diff.
-    expect(ev.value_locations.some((l) => l.field === "price" && l.found_at.length > 0)).toBe(true);
+    expect(ev.value_locations.some((l) => l.field === "title" && l.found_at.length > 0)).toBe(true);
 
     const p = buildPrompt(ev);
     expect(p.length).toBeLessThanOrEqual(PROMPT_MAX);
-    expect(p).toContain("price");
+    expect(p).toContain("Echo Portable Speaker");
     // No baseline means nothing may be claimed about what was removed.
     expect(p).not.toContain("no longer exists");
   });
 
   it("does not repeat a value pinned by a golden and observed in a run", () => {
-    const ev = buildEvidence(incident, contract, baseline, renested, [], {
+    const ev = buildEvidence(incident, contract, baseline, renamed, [], {
       [contract.canaries[0]!.url]: { price: 49.99 },
     });
     const priceLocs = ev.value_locations.filter((l) => l.field === "price");
@@ -130,7 +130,7 @@ describe("evidence → prompt", () => {
   });
 
   it("prompt survives a pathologically large evidence pack", () => {
-    const ev = buildEvidence(incident, contract, baseline, renested, [
+    const ev = buildEvidence(incident, contract, baseline, renamed, [
       "x".repeat(5000),
     ]);
     ev.dom_diff!.added = Array.from({ length: 50 }, (_, i) => ({

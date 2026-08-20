@@ -19,15 +19,15 @@ import { BrightDataApiError } from "../packages/adapters/brightdata/api.js";
 import type { PageCapture, PageFetcher } from "../apps/agent/archive.js";
 import type { BrightDataApi, Collector, Job, JobLog } from "../packages/adapters/brightdata/api.js";
 import type { JobHealth } from "../packages/core/sense/job-health.js";
-import { productPage, PRODUCTS } from "../apps/ui/pages.js";
+import { listingPage, PRODUCTS } from "../apps/ui/pages.js";
 import type { Contract } from "../packages/core/types.js";
 
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
 const COLLECTOR = contract.collector_id!;
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const echoUrl = contract.canaries[0]!.url;
-const baselineHtml = productPage(echo, "none");
-const injectedHtml = productPage(echo, "renest");
+const baselineHtml = listingPage("none");
+const injectedHtml = listingPage("cardrename");
 
 /** A REST client stub that answers from in-memory tables and counts its calls. */
 class FakeApi {

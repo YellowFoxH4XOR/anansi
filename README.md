@@ -23,10 +23,11 @@ Built for **Into the Scrape-Verse** (WeMakeDevs × Bright Data, Aug 17–23, 202
 ## Demo video
 
 **Link: TBD** — recorded during build week; beat-by-beat script in
-[docs/demo-script.md](docs/demo-script.md). The kill shot at 0:40 is the partial-breakage
-mutation: one product of four switches to the promo template, the run reports SUCCESS with a
-healthy success rate, and ANANSI opens an incident on the single row that came back null —
-the failure a job-level health check cannot see by construction.
+[docs/demo-script.md](docs/demo-script.md). The kill shot at 0:40 is L3: the index's product
+links go JS-driven, every card still matches `a.card-link`, and every one now resolves to the
+index itself. Stage 2 scrapes the same page four times — the right NUMBER of rows, all of
+them the wrong page — and the job reports SUCCESS throughout. A row-count check passes and
+the data is entirely wrong.
 
 ### Screenshots
 
