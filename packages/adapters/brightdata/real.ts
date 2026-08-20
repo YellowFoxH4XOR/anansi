@@ -43,8 +43,19 @@ export class RealBrightData implements BrightDataAdapter {
     return { ...res, raw: res };
   }
 
+  /** Approve AND save. `--auto-save` is not a convenience flag: without it the
+   *  heal is approved but the healed template is never published, so the
+   *  collector keeps running the version that was already broken.
+   *
+   *  Observed live on 2026-08-20 — incident 855c4ad8 passed every gate and
+   *  promoted, and the runs after it still carried template
+   *  t_msyy9dxtjbuxhxeu6.3, the same one that failed. Every promotion ANANSI
+   *  had ever made was a no-op on the platform.
+   *
+   *  It polls the save through to completion, so it gets heal-sized patience
+   *  rather than the 120s a fire-and-forget call needed. */
   async approve(collectorId: string): Promise<void> {
-    await this.cli(["scraper", "approve", collectorId], 120_000);
+    await this.cli(["scraper", "approve", collectorId, "--auto-save", "--timeout", "900"], 960_000);
   }
 
   async reject(collectorId: string): Promise<void> {
