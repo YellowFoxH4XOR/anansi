@@ -16,13 +16,22 @@
 // Everything else on these pages is decoration: baseline vs mutated renders
 // must differ ONLY by the mutation itself (the diff pipeline diffs them).
 
-export type Mutation = "none" | "rename" | "salevariant" | "renest" | "hashed" | "locale";
+export type Mutation =
+  | "none"
+  | "rename"
+  | "salevariant"
+  | "renest"
+  | "hashed"
+  | "locale"
+  | "cardrename"
+  | "paginate"
+  | "jslinks";
 
 export const MUTATIONS: {
   id: Mutation;
   tag: string; // short chip shown on the control panel
   name: string; // display name for the control-panel row
-  series: "reset" | "M";
+  series: "reset" | "M" | "L";
   blurb: string;
   expect: string; // the one-line expected ANANSI response
 }[] = [
@@ -73,6 +82,30 @@ export const MUTATIONS: {
     series: "M",
     blurb: "The price element is untouched; its TEXT becomes \"USD 49,99\" — currency code, comma decimal. Geo-rendering, a currency switcher, a CDN in another region.",
     expect: "the selector still matches and the field still fills — the VALUE fails its declared number type → heal fixes the parse, not the selector.",
+  },
+  {
+    id: "cardrename",
+    tag: "L1",
+    name: "Listing tile renamed",
+    series: "L",
+    blurb: ".card becomes .product-tile on the index. The product pages are untouched and every selector on them still works.",
+    expect: "discovery finds zero links, so stage 2 never runs. The job reports SUCCESS with 0 rows — the run that collected nothing looks like the run that had nothing to collect.",
+  },
+  {
+    id: "paginate",
+    tag: "L2",
+    name: "Half the catalogue behind Load more",
+    series: "L",
+    blurb: "The index renders 2 of 4 tiles; the rest arrive only after a click. Nothing is renamed and nothing errors.",
+    expect: "row count halves on a clean run. No selector is wrong, so only volume against this collector's own history can see it.",
+  },
+  {
+    id: "jslinks",
+    tag: "L3",
+    name: "Links go JS-driven",
+    series: "L",
+    blurb: 'href becomes "#" and the real path moves to data-href — an SPA migration. The anchors are still there and still match.',
+    expect: "every card resolves to the index itself, so stage 2 scrapes the same page four times: the right NUMBER of rows, all of them the wrong page.",
   },
 ];
 
@@ -223,6 +256,13 @@ function layout(title: string, body: string): string {
   .price-was, .buy-row .price-was { font-size:1.05rem; color:var(--faint); text-decoration:line-through; }
   .PriceBlock_root__2d7be { display:flex; align-items:baseline; flex-wrap:wrap; gap:.8rem; margin:.2rem 0 1.2rem; }
   .Title_heading__8b2c1 { font-family:var(--serif); font-weight:560; }
+  /* L1's renamed tile must be visually identical to .card — a mutation a human
+     can see is a broken page, not silent drift. */
+  .product-tile { background:var(--card); border:1px solid var(--line); border-radius:16px; overflow:hidden; transition:border-color .15s ease, transform .15s ease; }
+  .product-tile:hover { border-color:var(--accent); transform:translateY(-2px); }
+  .more { display:flex; justify-content:center; margin-top:1.6rem; }
+  .load-more { font-family:var(--sans); font-size:.82rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--accent-deep); background:transparent; border:1px solid var(--line); border-radius:10px; padding:.8rem 1.8rem; cursor:pointer; }
+  .load-more:hover { border-color:var(--accent); }
   .price-block .was { font-size:1.05rem; }
   .price-block .availability { margin-left:0; }
   .save-chip { font-size:.66rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); background:#f9e9e2; border:1px solid #eed3c8; border-radius:99px; padding:.26rem .68rem; }
@@ -368,7 +408,13 @@ export function productPage(p: Product, mutation: Mutation): string {
 }
 
 export function listingPage(mutation: Mutation): string {
-  const cards = PRODUCTS.map((p) => {
+  // L-series: the index is stage 1 of a two-stage scrape. It is parsed for
+  // product links, and each link becomes an input to stage 2. Nothing here
+  // touches the product pages — which is the point. A stage-1 break collects
+  // NOTHING while every selector on the pages it never reached still works.
+  const shown = mutation === "paginate" ? PRODUCTS.slice(0, 2) : PRODUCTS;
+  const cardClass = mutation === "cardrename" ? "product-tile" : k("card", mutation);
+  const cards = shown.map((p) => {
     const flag = p.availability === "out of stock"
       ? `<span class="flag flag-oos">Sold out</span>`
       : p.sale_price
@@ -377,8 +423,12 @@ export function listingPage(mutation: Mutation): string {
     // The listing renders each card through the SAME price markup as the product
     // page, so a mutation that hits one hits the other — which is what a shared
     // component does on a real store, and is why M2 breaks exactly one card here.
-    return `<div class="${k("card", mutation)}" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
-  <a class="card-link" href="/product/${p.sku}">
+    // L3 keeps the anchor and its class — it still matches — and empties the
+    // href. `new URL("#", base)` resolves to the index, so every product url
+    // stage 1 hands on is the page it was already looking at.
+    const href = mutation === "jslinks" ? `#" data-href="/product/${p.sku}` : `/product/${p.sku}`;
+    return `<div class="${cardClass}" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
+  <a class="card-link" href="${href}">
     <div class="thumb">${p.emoji}${flag}</div>
     <div class="card-body">
       <div class="kicker">${p.category}</div>
@@ -395,11 +445,11 @@ export function listingPage(mutation: Mutation): string {
 </div>
 <div class="shop-head">
   <h2>All products</h2>
-  <span class="count">${PRODUCTS.length} objects</span>
+  <span class="count">${shown.length} objects</span>
 </div>
 <div class="grid">
 ${cards}
-</div>`;
+</div>${mutation === "paginate" ? `\n<div class="more"><button class="load-more" type="button" data-remaining="${PRODUCTS.length - shown.length}">Load more</button></div>` : ""}`;
   const body = inner;
   return layout("Shop", body);
 }
@@ -430,6 +480,7 @@ function controlRow(m: (typeof MUTATIONS)[number], current: Mutation): string {
 export function controlPage(current: Mutation): string {
   const reset = MUTATIONS.filter((m) => m.series === "reset").map((m) => controlRow(m, current)).join("\n");
   const mRows = MUTATIONS.filter((m) => m.series === "M").map((m) => controlRow(m, current)).join("\n");
+  const lRows = MUTATIONS.filter((m) => m.series === "L").map((m) => controlRow(m, current)).join("\n");
   const stateLabel = current === "none" ? "BASELINE" : current.toUpperCase();
   return `<!doctype html>
 <html lang="en">
@@ -527,8 +578,10 @@ export function controlPage(current: Mutation): string {
 <main>
   <p class="lede">Every storefront page re-reads mutation state <b>on every request</b> — a fire lands instantly, no deploy, no cache. Fire a mutation, run a sweep, watch ANANSI respond.</p>
 ${reset}
-  <div class="ghead"><span class="gname">M-SERIES</span><span class="gdesc">heal these — parser breakage ANANSI must repair autonomously</span></div>
+  <div class="ghead"><span class="gname">M-SERIES · PRODUCT PAGE</span><span class="gdesc">stage 2 breaks — the row is collected but a field is wrong or missing</span></div>
 ${mRows}
+  <div class="ghead"><span class="gname">L-SERIES · INDEX PAGE</span><span class="gdesc">stage 1 breaks — discovery finds the wrong links, so rows are never collected at all</span></div>
+${lRows}
 </main>
 <footer>deep-link any scenario: <code>/__control?mutate=&lt;id&gt;</code> · state lives in KV · <code>Cache-Control: no-store</code> everywhere</footer>
 </body>

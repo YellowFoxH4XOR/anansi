@@ -145,6 +145,22 @@ export class Store {
     return rs[rs.length - 1]?.snapshot_ref;
   }
 
+  /** The urls the most recent healthy run collected.
+   *
+   *  Deliberately one run's set, not every url ever seen. Accumulating would
+   *  mean a product discontinued months ago is reported missing on every run
+   *  forever; the last good run is the only honest statement of what this
+   *  scraper currently collects. */
+  lastGoodUrls(scraper: string): string[] {
+    const good = this.runs(scraper).filter(
+      (r) => !r.error_code && r.healthy === true && r.url && r.url !== "unknown",
+    );
+    const newest = good[good.length - 1];
+    if (!newest) return [];
+    const sweep = newest.sweep_ts;
+    return [...new Set(good.filter((r) => r.sweep_ts === sweep).map((r) => r.url))];
+  }
+
   /** The values this scraper last produced correctly, by url then field.
    *
    *  This is the baseline that exists for EVERY collector. An archived page does

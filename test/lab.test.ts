@@ -82,6 +82,33 @@ describe("Mutation Lab", () => {
     expect(r.body).not.toContain("$49.99");
   });
 
+  it("L1 renames the listing tile and leaves the product pages alone", async () => {
+    await get("/__control?mutate=cardrename");
+    const listing = (await get("/")).body;
+    expect(listing).not.toContain('class="card"');
+    expect(listing).toContain('class="product-tile"');
+    // The pages discovery never reaches are still perfect — which is why a
+    // stage-2 check finds nothing wrong.
+    expect((await get("/product/echo-speaker")).body).toContain('class="price">$49.99');
+  });
+
+  it("L2 renders half the catalogue and offers the rest behind a button", async () => {
+    await get("/__control?mutate=paginate");
+    const listing = (await get("/")).body;
+    expect((listing.match(/class="card"/g) ?? []).length).toBe(2);
+    expect(listing).toContain("load-more");
+    expect(listing).toContain('data-remaining="2"');
+  });
+
+  it("L3 keeps the anchors matching but empties their href", async () => {
+    await get("/__control?mutate=jslinks");
+    const listing = (await get("/")).body;
+    // The selector still matches — that is what makes it silent.
+    expect((listing.match(/class="card-link"/g) ?? []).length).toBe(4);
+    expect(listing).toContain('href="#"');
+    expect(listing).toContain('data-href="/product/echo-speaker"');
+  });
+
   it("M3 re-nests the price under data-testid", async () => {
     await get("/__control?mutate=renest");
     const r = await get("/product/echo-speaker");

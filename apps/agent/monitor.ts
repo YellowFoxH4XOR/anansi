@@ -22,7 +22,7 @@ import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
 import { Store, type MonitorCursor } from "../../packages/adapters/store/index.js";
 import { contractFieldsFromSchema, splitRow, type OutputSchema, type RawRow } from "../../packages/adapters/brightdata/types.js";
 import type { KnownGood } from "../../packages/core/diagnose/evidence.js";
-import { shapeDrift } from "../../packages/core/sense/rows.js";
+import { missingUrls, shapeDrift } from "../../packages/core/sense/rows.js";
 import { driveIncident, type HealAdapter } from "./incident.js";
 import { archivePages, type ArchiveResult, type PageFetcher } from "./archive.js";
 
@@ -527,6 +527,20 @@ export class Monitor {
       url,
       detail: `${path} stopped filling — this scraper produced it on every previous good run of ${url}, and the job still reported success`,
     }));
+    // Pages that stopped being collected at all. This is the discovery-stage
+    // signal: when an index selector misses, stage 2 is never called, so there
+    // is no row to have drifted — only rows that are absent, or rows for a page
+    // nobody asked for.
+    const missing = health.outcome === "success" ? missingUrls(store.lastGoodUrls(name), records) : [];
+    const missingSignals: Violation[] = missing.map((url) => ({
+      signal: "fill_rate",
+      url,
+      detail: `${url} was collected by the last good run and not by this one — the job still reported success`,
+    }));
+    if (missing.length) {
+      this.log(`[${name}] job ${job.id}: ${missing.length} page(s) the last good run collected are missing from this one`);
+    }
+
     if (drift.length) {
       this.log(`[${name}] job ${job.id}: ${drift.length} field(s) stopped filling — ${[...new Set(drift.map((d) => d.path))].join(", ")}`);
     }
@@ -538,7 +552,7 @@ export class Monitor {
       sense = out.result;
       nextFlags = out.flags;
     }
-    let merged = mergeJobHealth(health, sense, name, records, [...volume, ...fieldSignals, ...driftSignals]);
+    let merged = mergeJobHealth(health, sense, name, records, [...volume, ...fieldSignals, ...driftSignals, ...missingSignals]);
 
     // Two-strike rule for a failure nothing explains. Routing blind to heal
     // burns AI generations on what is usually a platform hiccup; routing it to
@@ -646,6 +660,12 @@ export class Monitor {
     const overrides: { route: Route; detail: string }[] = [];
     if (archiveRoute) {
       overrides.push({ route: archiveRoute, detail: `archive fetch returned ${[...new Set(archiveCodes)].join(", ")} → ${archiveRoute} lane` });
+    }
+    if (missing.length) {
+      overrides.push({
+        route: "heal",
+        detail: `${missing.length} page(s) the last good run collected were not collected at all → heal lane`,
+      });
     }
     if (drift.length) {
       // Without this the whole detection is inert. A drifted run comes back from

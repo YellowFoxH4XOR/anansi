@@ -103,3 +103,19 @@ export function shapeDrift(
   }
   return out;
 }
+
+/** Pages the last good run collected that this run did not.
+ *
+ *  The page-level twin of shapeDrift, and the only thing that can see a broken
+ *  DISCOVERY stage. A two-stage scrape parses an index for links and feeds each
+ *  one to stage 2, so when the index selector misses, stage 2 is simply never
+ *  called: the job reports success having collected nothing, and every selector
+ *  on the pages it never reached still works perfectly.
+ *
+ *  shapeDrift cannot see it. Its rows are keyed by url, and a discovery break
+ *  produces either no rows at all or rows for a url that was never seen before —
+ *  in both cases there is nothing to compare against, so it reports nothing. */
+export function missingUrls(lastGood: readonly string[], records: readonly { url: string }[]): string[] {
+  const seen = new Set(records.map((r) => r.url));
+  return lastGood.filter((u) => !seen.has(u)).sort();
+}

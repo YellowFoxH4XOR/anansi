@@ -16,7 +16,8 @@ video and survive a judge poking it days later.
   land on different instances and mutations intermittently vanish (a flaky, undebuggable
   demo failure). Read the KV on every request; send `Cache-Control: no-store` on every Lab
   page including `/__control`. Verify on D1 with two rapid curls after a mutation flip.
-  State: `{mutation: "none" | "rename" | "salevariant" | "renest" | "hashed" | "locale"}`.
+  State: `{mutation: "none" | "rename" | "salevariant" | "renest" | "hashed" | "locale" |
+  "cardrename" | "paginate" | "jslinks"}`.
 - `/__control` — the control panel: one button per mutation + RESET. Also accepts
   `?mutate=rename` links so the README can deep-link each scenario.
 - Every page renders according to current mutation state. Reset returns to baseline instantly.
@@ -68,6 +69,44 @@ video and survive a judge poking it days later.
   declared `number` type. The DOM diff is completely empty — nothing moved — so this is the
   one scenario a diff-only diagnosis cannot see at all.
 - Real cause: geo-aware rendering, a currency switcher, a CDN answering from another region.
+
+## L-series — the index page (stage 1)
+
+The scraper is two stages. Stage 1 parses the index for links and hands each one to stage 2:
+
+```js
+const product_cards = $('.card').toArray();
+const product_urls = product_cards.map(card =>
+  new URL($(card).find('a.card-link').attr('href'), base_url).href).filter(Boolean);
+```
+
+A stage-1 break is worse than a stage-2 break and looks like less. When that selector
+misses, stage 2 is **never called**: the job reports success having collected nothing, and
+every selector on the pages it never reached still works perfectly — so an audit of the
+product pages finds nothing wrong.
+
+`shapeDrift` cannot see any of it. Its rows are keyed by url, and a discovery break produces
+either no rows at all or rows for a url never seen before; in both cases there is nothing to
+compare against. `missingUrls` is the page-level twin: what the last good run collected and
+this one did not.
+
+### L1 · Listing tile renamed
+- After: `.card` becomes `.product-tile` on the index only.
+- Expect: 0 links discovered → 0 rows, on a run reporting SUCCESS. The run that collected
+  nothing is indistinguishable from the run that had nothing to collect, until you compare it
+  against the pages the last good run did collect.
+
+### L2 · Half the catalogue behind "Load more"
+- After: the index renders 2 of 4 tiles; the rest arrive only on a click.
+- Expect: the row count halves on a clean run. Nothing is renamed and nothing errors, so no
+  selector is wrong — only volume against this collector's own history can see it.
+
+### L3 · Links go JS-driven
+- After: `href="#"`, real path in `data-href`. An SPA migration.
+- Expect: the anchors still match, so stage 1 finds four of them — and
+  `new URL("#", base)` resolves every one to the index. Stage 2 scrapes the same page four
+  times: the right NUMBER of rows, all of them the wrong page. This is the one where a row
+  count check passes and the data is entirely wrong.
 
 ## Stretch (Tier 3) / cut-first
 

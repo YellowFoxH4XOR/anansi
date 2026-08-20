@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { BrightDataApi } from "../packages/adapters/brightdata/api.js";
 import { splitRow } from "../packages/adapters/brightdata/types.js";
-import { flattenRow, rowShape, droppedPaths, locatableValues, expectedPaths, shapeDrift } from "../packages/core/sense/rows.js";
+import { flattenRow, rowShape, droppedPaths, locatableValues, expectedPaths, shapeDrift, missingUrls } from "../packages/core/sense/rows.js";
 
 const body = (payload: string, type = "application/json") =>
   new BrightDataApi("k", (async () => ({
@@ -177,5 +177,48 @@ describe("a crawl seeded at one url and following links", () => {
   it("falls back to the seed when a row has no page of its own", () => {
     const r = splitRow({ title: "x", input: { url: "https://shop.example/list" } });
     expect(r.url).toBe("https://shop.example/list");
+  });
+});
+
+describe("a broken discovery stage", () => {
+  // Stage 1 parses the index for links and hands each to stage 2:
+  //     const product_cards = $('.card').toArray();
+  //     $(card).find('a.card-link').attr('href')  ->  next_stage({url})
+  // When that selector misses, stage 2 is never called. The job reports success
+  // having collected nothing, and every selector on the pages it never reached
+  // still works — so nothing about the product pages is wrong to find.
+  const lastGood = [
+    "https://lab/product/echo-speaker",
+    "https://lab/product/aurora-lamp",
+    "https://lab/product/tidal-bottle",
+    "https://lab/product/graphite-keyboard",
+  ];
+
+  it("L1: names every page when discovery collapses to nothing", () => {
+    expect(missingUrls(lastGood, [])).toEqual([...lastGood].sort());
+  });
+
+  it("L2: names only the half that stopped being collected", () => {
+    const half = lastGood.slice(0, 2).map((url) => ({ url }));
+    expect(missingUrls(lastGood, half)).toEqual([...lastGood.slice(2)].sort());
+  });
+
+  it("L3: sees it even though the row COUNT is unchanged", () => {
+    // Links become href="#", so all four resolve to the index and stage 2
+    // scrapes the same page four times. The right number of rows, all of them
+    // the wrong page — and shape drift is blind to it, because a url never seen
+    // before has nothing to have drifted from.
+    const wrong = lastGood.map(() => ({ url: "https://lab/#" }));
+    expect(wrong).toHaveLength(4);
+    expect(missingUrls(lastGood, wrong)).toEqual([...lastGood].sort());
+    expect(shapeDrift({ "https://lab/product/echo-speaker": { title: "Echo" } }, wrong.map((r) => ({ ...r, fields: {} })))).toEqual([]);
+  });
+
+  it("says nothing when the same pages come back", () => {
+    expect(missingUrls(lastGood, lastGood.map((url) => ({ url })))).toEqual([]);
+  });
+
+  it("says nothing before there is a good run to compare against", () => {
+    expect(missingUrls([], [{ url: "https://lab/x" }])).toEqual([]);
   });
 });
