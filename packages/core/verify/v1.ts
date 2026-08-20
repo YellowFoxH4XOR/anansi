@@ -8,7 +8,7 @@ import { checkFields } from "../sense/contract.js";
 import { checkInvariants } from "../sense/invariants.js";
 import { checkGolden, pinnedValue } from "../sense/goldens.js";
 import { locateValue } from "../diagnose/diff.js";
-import { locatableValues, rowShape, droppedPaths } from "../sense/rows.js";
+import { locatableValues, rowShape, unrestoredRoots } from "../sense/rows.js";
 import { confidence } from "./confidence.js";
 
 export type PreviewRow = { url?: string; fields: Record<string, unknown> };
@@ -135,14 +135,14 @@ export function verifyV1(
   const knownShape = new Set(Object.values(knownGood).flatMap((f) => [...rowShape(f)]));
   if (knownShape.size > 0) {
     const healedShape = new Set(previewRows.flatMap((r) => [...rowShape(r.fields)]));
-    const stillMissing = droppedPaths(knownShape, healedShape);
-    for (const path of stillMissing) fieldPassed[path.split(/[.[]/)[0]!] = false;
+    const stillMissing = unrestoredRoots(knownShape, healedShape);
+    for (const field of stillMissing) fieldPassed[field] = false;
     gates.push({
       gate: "shape_restored",
       pass: stillMissing.length === 0,
       detail: stillMissing.length
         ? `still not filled after the heal: ${stillMissing.slice(0, 6).join(", ")}`
-        : `every path this scraper used to fill is filled again (${knownShape.size} checked)`,
+        : `every field this scraper used to fill is filled again (${new Set([...knownShape].map((p) => p.split(/[.[]/)[0]!)).size} checked)`,
     });
   }
 

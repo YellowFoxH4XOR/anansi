@@ -175,6 +175,13 @@ export async function driveIncident(
     const prompt = await llm.healPrompt(evidence);
     rec.prompt = prompt;
     rec.evidence_ref = await store.saveSnapshot(JSON.stringify(evidence, null, 2));
+    // Persist mid-flight. The console counts heal attempts from audit events,
+    // which land immediately, but reads the prompt off the incident record —
+    // which used to be written only at open and at close. So a running incident
+    // reported "2 attempt(s)" under a DIAGNOSE stage still saying "building
+    // evidence pack…", for the whole 25 minutes a heal can take. The record is
+    // append-only with last-write-wins, so writing it as it changes costs a line.
+    await store.putIncident(rec);
     log(`incident ${rec.id}: heal attempt ${attempt} — "${prompt.slice(0, 100)}…"`);
     // scraper is on the event so the daily per-collector heal budget can be
     // rebuilt from the audit log after a restart.
@@ -203,6 +210,7 @@ export async function driveIncident(
       verdict: v1,
       ts: Date.now(),
     });
+    await store.putIncident(rec);
     await store.audit({ event: "verify_v1", id: rec.id, attempt, pass: v1.pass, confidence: v1.confidence, gates: v1.gates });
 
     if (!v1.pass) {

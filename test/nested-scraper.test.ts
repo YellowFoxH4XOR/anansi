@@ -103,3 +103,39 @@ describe("verifying a heal on a nested record", () => {
     expect(v.pass).toBe(false);
   });
 });
+
+describe("comparing a heal preview against a collected row", () => {
+  // The two are serialized by different code on Bright Data's side. Verbatim
+  // from incident c2d09f3b: the collected row carried Money as
+  // {value, currency, symbol}; the heal's preview carried {value, currency}.
+  // Nothing was wrong with the fix.
+  const collected = { product_title: "Echo", price: { value: 49.99, currency: "USD", symbol: "$" } };
+  const page = '<html><body><h1>Echo</h1><span class="p">49.99</span></body></html>';
+  const contract = observedContract("c_1", { fields: { product_title: { type: "text", active: true } } });
+
+  it("does not reject a good fix over a sub-field the preview does not carry", () => {
+    const v = verifyV1(
+      contract,
+      [{ url: "u", fields: { product_title: "Echo", price: { value: 49.99, currency: "USD" } } }],
+      { u: page },
+      [],
+      { u: collected },
+    );
+    const shape = v.gates.find((g) => g.gate === "shape_restored")!;
+    expect(shape.pass).toBe(true);
+  });
+
+  it("still rejects a fix that did not bring the field back at all", () => {
+    const v = verifyV1(
+      contract,
+      [{ url: "u", fields: { product_title: "Echo" } }],
+      { u: page },
+      [],
+      { u: collected },
+    );
+    const shape = v.gates.find((g) => g.gate === "shape_restored")!;
+    expect(shape.pass).toBe(false);
+    expect(shape.detail).toContain("price");
+    expect(shape.detail).not.toContain("symbol");
+  });
+});

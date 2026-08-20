@@ -129,6 +129,20 @@ describe("console stage view-model", () => {
   });
 });
 
+describe("a running incident reports what it has already done", () => {
+  it("shows the prompt as soon as one exists, not 'building evidence pack'", () => {
+    // Observed live on incident c2d09f3b: "2 attempt(s)" under a DIAGNOSE stage
+    // still claiming to be building the evidence pack. Attempts are counted from
+    // audit events, which land immediately; the prompt is read off the incident
+    // record, which used to be written only at open and at close.
+    const live = incident({ resolution: undefined, prompt: "fix the card selector", current_ref: "cur" });
+    const stage2 = stage(stagesFor(live, []), "2 ·");
+    expect(stage2.meta).toContain("fix the card selector");
+    expect(stage2.meta).not.toContain("building evidence pack");
+    expect(stage2.status).toBe("done");
+  });
+});
+
 describe("an incident with nothing to diff is not a quarantine", () => {
   // This used to quarantine, which halted the collector permanently, and the
   // console reported it as "human paged" — for an incident where nothing was

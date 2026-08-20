@@ -119,3 +119,25 @@ export function missingUrls(lastGood: readonly string[], records: readonly { url
   const seen = new Set(records.map((r) => r.url));
   return lastGood.filter((u) => !seen.has(u)).sort();
 }
+
+/** The top-level field a path belongs to: `price.value` -> `price`. */
+export function rootOf(path: string): string {
+  return path.split(/[.[]/)[0]!;
+}
+
+/** Expected fields a healed row still does not fill, compared at ROOT level.
+ *
+ *  Deliberately coarser than droppedPaths, because this comparison is between
+ *  two different representations of the same record. A heal's preview rows and a
+ *  collected dataset row are serialized by different code on Bright Data's side:
+ *  `new Money(49.99, 'USD')` reaches a dataset as {value, currency, symbol} and
+ *  a preview need not carry all three. Comparing leaf paths therefore rejected a
+ *  perfectly good fix for not filling `price.symbol` — a difference in
+ *  representation, not in what was scraped.
+ *
+ *  Detection keeps the leaf-level comparison (droppedPaths), and correctly so:
+ *  there both sides are collected datasets, so like is compared with like. */
+export function unrestoredRoots(expected: Set<string>, actual: Set<string>): string[] {
+  const have = new Set([...actual].map(rootOf));
+  return [...new Set([...expected].map(rootOf))].filter((r) => !have.has(r)).sort();
+}
