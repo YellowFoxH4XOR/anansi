@@ -397,6 +397,38 @@ describe("the free HTML archive", () => {
   });
 });
 
+describe("finding the page when this run named none", () => {
+  it("archives the url from the collector's own last good run", async () => {
+    // The live gap on c_mt1mhrj82pr6gc44rw: a zero-row failure names no url, no
+    // YAML pins a canary, and hard_fail signals carry none either — so the
+    // archive was handed an empty list and Diagnose reported "the archive could
+    // not fetch the page", when nothing had told it WHICH page. The scraper's
+    // own last good run says: its rows carry input.url.
+    const asked: string[] = [];
+    const good: Job = { id: "j_ok", finished: "2025-08-19T09:00:00Z", data_lines: 1 };
+    const fail1: Job = { id: "j_f1", finished: "2025-08-19T11:00:00Z", data_lines: 0, failed_pages: 1 };
+    const fail2: Job = { id: "j_f2", finished: "2025-08-19T11:05:00Z", data_lines: 0, failed_pages: 1 };
+
+    // One nested record, exactly as quotes.toscrape.com returns it.
+    const nested = [{ quotes: [{ text: "a quote long enough to locate", author: "Someone" }], input: { url: "http://quotes.toscrape.com/" } }];
+    const api = new FakeApi(
+      [{ id: COLLECTOR }],
+      { [COLLECTOR]: [good, fail1] },
+      { j_f1: { id: "j_f1", fails: 1, success_rate: 0 }, j_f2: { id: "j_f2", fails: 1, success_rate: 0 } },
+      { j_ok: nested, j_f1: [], j_f2: [] },
+    );
+    // No contract anywhere: this is the zero-config path.
+    const opts = { contracts: new Map<string, Contract>(), fetchPage: pageFetcher(injectedHtml, asked) };
+
+    await monitorWith(api, opts).pollCollector(COLLECTOR); // strike 1
+    pushJob(api, COLLECTOR, fail2);
+    clock += 60 * 60_000;
+    await monitorWith(api, opts).pollCollector(COLLECTOR); // strike 2 -> heal lane
+
+    expect(asked).toContain("http://quotes.toscrape.com/");
+  });
+});
+
 describe("quarantine is not a one-way door", () => {
   it("returns a quarantined collector to service when a run comes back clean", async () => {
     // Nothing but a human running `collector:release` ever left quarantine, so a

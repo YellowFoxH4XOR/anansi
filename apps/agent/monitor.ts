@@ -581,7 +581,14 @@ export class Monitor {
       return { outcome: health.outcome };
     }
 
-    const { refs, captures } = await this.archive(this.targetUrls(contract, records, merged.signals), true);
+    // Resolved BEFORE the archive runs, because it is also where the urls come
+    // from when this run produced none.
+    const knownGood = await this.knownGoodFor(collectorId, name, siblings, job.id);
+    const targets = this.targetUrls(contract, records, merged.signals, knownGood);
+    if (targets.length === 0) {
+      this.log(`[${name}] job ${job.id}: no page to capture — this run named no url, no contract pins one, and no earlier run of this collector produced one`);
+    }
+    const { refs, captures } = await this.archive(targets, true);
     const withRefs = records.map((r) => (refs[r.url] ? { ...r, snapshot_ref: refs[r.url] } : r));
     await this.recordRun(name, withRefs, {}, job.id, ts, false);
 
@@ -631,7 +638,7 @@ export class Monitor {
     this.log(`[${name}] INCIDENT (${incident.route}) from job ${job.id}: ${incident.signals.map((v) => `${v.signal}${v.field ? `:${v.field}` : ""}`).join(", ")}`);
     const schema = this.platformFor(collectorId)?.output_schema;
     const rec = await driveIncident(incident, contract ?? observedContract(collectorId, schema), {
-      knownGood: await this.knownGoodFor(collectorId, name, siblings, job.id),
+      knownGood,
       bd: this.deps.heal,
       llm: this.deps.llm,
       store,
@@ -720,13 +727,28 @@ export class Monitor {
     );
   }
 
-  /** Canary URLs first — they are what the goldens pin. Without a contract the
-   *  collected rows are the only target list there is. */
-  private targetUrls(contract: Contract | undefined, records: RunRecord[], signals: Violation[] = []): string[] {
+  /** Pages worth capturing for this incident, best evidence first.
+   *
+   *  The last source is the one that makes a contract-less collector
+   *  diagnosable at all. A run that returned zero rows names no url; a scraper
+   *  with no YAML pins no canary; a hard_fail signal carries no url either — so
+   *  for the case ANANSI now exists to handle, the first three lists are ALL
+   *  empty and the archive fetched nothing, which read as "the archive could not
+   *  fetch the page" when the truth was that nobody had told it which page.
+   *
+   *  The scraper's own last good run says which. Its rows carry input.url, and
+   *  that is history the platform keeps whether or not ANANSI was watching. */
+  private targetUrls(
+    contract: Contract | undefined,
+    records: RunRecord[],
+    signals: Violation[] = [],
+    knownGood: KnownGood = {},
+  ): string[] {
     const hit = signals.flatMap((s) => (s.url ? [s.url] : []));
     const canaries = contract?.canaries.map((c) => c.url) ?? [];
     const collected = records.map((r) => r.url).filter((u) => u !== "unknown");
-    return [...new Set([...hit, ...canaries, ...collected])];
+    const previously = Object.keys(knownGood).filter((u) => u && u !== "unknown");
+    return [...new Set([...hit, ...canaries, ...collected, ...previously])];
   }
 
   private async archive(urls: string[], force: boolean): Promise<ArchiveResult> {
