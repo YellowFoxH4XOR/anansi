@@ -57,6 +57,10 @@ export type MonitorCursor = {
   /** Whether the platform reports the scraper as active. A paused scraper that
    *  stops running is not overdue; it is off. */
   platform_active?: boolean;
+  /** When a fix was promoted and the collector began watching for its
+   *  verification. A run that STARTED before this ran the pre-fix template and
+   *  can prove nothing about the fix, however it turns out. */
+  watching_since_ms?: number;
 };
 
 export const NEW_CURSOR: MonitorCursor = {

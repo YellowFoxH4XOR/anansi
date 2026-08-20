@@ -397,6 +397,50 @@ describe("the free HTML archive", () => {
   });
 });
 
+describe("only a run that postdates the fix can verify it", () => {
+  it("does not quarantine on a failure that started before the promotion", async () => {
+    // Observed live on 2026-08-20: incident 855c4ad8 promoted a fix, and the
+    // very next job the monitor saw was quarantined as a regression. Both jobs
+    // carried template t_msyy9dxtjbuxhxeu6.3 and the "verifying" one FINISHED
+    // 50s before the heal was even called — it had been queued 8s after the run
+    // that opened the incident. A collector that runs more often than a heal
+    // takes would condemn every fix it ever made.
+    const clockIso = (ms: number) => new Date(ms).toISOString();
+    const promotedAt = clock + 10_000;
+
+    const stale: Job = {
+      id: "j_stale",
+      started: clockIso(promotedAt - 60_000), // queued before the fix existed
+      finished: clockIso(promotedAt - 20_000),
+      data_lines: 0,
+      failed_pages: 1,
+    };
+    const api = new FakeApi(
+      [{ id: COLLECTOR }],
+      { [COLLECTOR]: [stale] },
+      { j_stale: { id: "j_stale", fails: 1, success_rate: 0 } },
+      { j_stale: [] },
+    );
+    const contracts = new Map([[COLLECTOR, contract]]);
+
+    await store.ensureCollector(contract.scraper);
+    await store.setCollectorState(contract.scraper, "watching");
+    await store.setMonitorCursor(contract.scraper, {
+      ...store.monitorCursor(contract.scraper),
+      seeded: true,
+      watching_since_ms: promotedAt,
+    });
+
+    const logs: string[] = [];
+    clock += 60 * 60_000;
+    await monitorWith(api, { contracts, fetchPage: pageFetcher(injectedHtml), logs }).pollCollector(COLLECTOR);
+
+    expect(store.collectorState(contract.scraper)).toBe("watching");
+    expect(logs.join(" ")).toContain("ran the old template");
+    expect(store.auditLog().some((e) => e.event === "pre_fix_run_ignored")).toBe(true);
+  });
+});
+
 describe("healing a collector that keeps no baseline page", () => {
   it("diagnoses a cold-start failure from the platform's own last good run", async () => {
     // The stuck case, and the general one. ANANSI has observed NO healthy run —

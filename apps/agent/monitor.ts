@@ -508,6 +508,29 @@ export class Monitor {
 
     // A collector that was watching a promoted fix and failed the very next
     // scheduled run is not a candidate for another AI attempt.
+    //
+    // But only a run that STARTED after the promotion can verify it. Bright Data
+    // runs on its own schedule, so a job queued moments before the incident
+    // opened finishes carrying the pre-fix template — observed live: the run
+    // that quarantined lab-storefront had template .3, the same as the run that
+    // triggered the heal, and finished 50 seconds BEFORE the heal call was made.
+    // Judging a fix by output that predates it condemns every heal whose
+    // collector runs more often than a heal takes.
+    const watchingSince = cursor.watching_since_ms;
+    const jobStarted = Date.parse(job.started ?? job.queued ?? "");
+    const predatesFix =
+      store.collectorState(name) === "watching" &&
+      watchingSince != null &&
+      Number.isFinite(jobStarted) &&
+      jobStarted < watchingSince;
+
+    if (predatesFix) {
+      await this.recordRun(name, records, {}, job.id, ts, false);
+      await store.audit({ event: "pre_fix_run_ignored", scraper: name, job_id: job.id, started: jobStarted, watching_since: watchingSince });
+      this.log(`[${name}] job ${job.id} failed, but it started before the fix was promoted — it ran the old template, so it verifies nothing. Still watching.`);
+      return { outcome: health.outcome };
+    }
+
     if (store.collectorState(name) === "watching") {
       await this.recordRun(name, records, (await this.archive(this.targetUrls(contract, records), true)).refs, job.id, ts, false);
       await store.setCollectorState(name, "quarantined");
@@ -573,6 +596,11 @@ export class Monitor {
       requiresHumanApproval: !contract,
       log: this.log,
     });
+    // The clock the verification run is measured against. Written here rather
+    // than inside driveIncident so the incident logic stays free of cursors.
+    if (rec.resolution === "promoted") {
+      await store.setMonitorCursor(name, { ...store.monitorCursor(name), watching_since_ms: this.now() });
+    }
     return { outcome: health.outcome, incidentId: rec.id };
   }
 
