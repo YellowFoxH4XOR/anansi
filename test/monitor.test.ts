@@ -27,7 +27,7 @@ const COLLECTOR = contract.collector_id!;
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const echoUrl = contract.canaries[0]!.url;
 const baselineHtml = productPage(echo, "none");
-const injectedHtml = productPage(echo, "inject");
+const injectedHtml = productPage(echo, "renest");
 
 /** A REST client stub that answers from in-memory tables and counts its calls. */
 class FakeApi {

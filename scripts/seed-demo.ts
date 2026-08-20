@@ -23,7 +23,7 @@ const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "ut
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const echoUrl = contract.canaries[0]!.url;
 const baselineHtml = productPage(echo, "none");
-const injectedHtml = productPage(echo, "inject");
+const injectedHtml = productPage(echo, "renest");
 const goodFields = { title: "Echo Portable Speaker", price: 49.99, sale_price: null, availability: "in stock" };
 
 const store = new Store(process.argv[2] ?? "data");

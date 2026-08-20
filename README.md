@@ -23,9 +23,10 @@ Built for **Into the Scrape-Verse** (WeMakeDevs × Bright Data, Aug 17–23, 202
 ## Demo video
 
 **Link: TBD** — recorded during build week; beat-by-beat script in
-[docs/demo-script.md](docs/demo-script.md). The kill shot at 0:40 is the silent-injection
-mutation: the scraper returns 200, valid JSON, and a confidently wrong price — and the golden
-band catches what null-checking never could.
+[docs/demo-script.md](docs/demo-script.md). The kill shot at 0:40 is the partial-breakage
+mutation: one product of four switches to the promo template, the run reports SUCCESS with a
+healthy success rate, and ANANSI opens an incident on the single row that came back null —
+the failure a job-level health check cannot see by construction.
 
 ### Screenshots
 

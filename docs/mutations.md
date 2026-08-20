@@ -16,7 +16,7 @@ video and survive a judge poking it days later.
   land on different instances and mutations intermittently vanish (a flaky, undebuggable
   demo failure). Read the KV on every request; send `Cache-Control: no-store` on every Lab
   page including `/__control`. Verify on D1 with two rapid curls after a mutation flip.
-  State: `{mutation: "none" | "rename" | "inject" | "renest"}`.
+  State: `{mutation: "none" | "rename" | "salevariant" | "renest" | "hashed" | "locale"}`.
 - `/__control` — the control panel: one button per mutation + RESET. Also accepts
   `?mutate=rename` links so the README can deep-link each scenario.
 - Every page renders according to current mutation state. Reset returns to baseline instantly.
@@ -29,23 +29,17 @@ video and survive a judge poking it days later.
 - Expect: signal 2/3 (null price) → diagnosis names the selector move → heal proposes new
   selector → verify passes → promoted. The whole loop, legible.
 
-### M2 · Silent injection — the differentiator, never cut
-- Before: price block is the first `.price` on the page.
-- After: a "Customers also bought" strip renders **above** it, containing its own `.price`
-  (`$12.99` phone case). The scraper still returns a number. **No error, no null — wrong.**
-- Expect: signals 1–3 all pass (that's the point, say it out loud in the video) → signal 4
-  golden band trips ($12.99 vs pinned $49.99 ± 15%) → diagnosis explains the injected block →
-  heal narrows the selector → verify → promoted.
-- This is the beat every null-checking lookalike fails. Video slot 0:40.
-
-### Removed: M3 · Cookie wall, S1 · 403 bot challenge
-Both were cut from the Lab. Neither exercised the loop ANANSI is actually for — a DOM
-that moved — and each cost a page of markup and CSS to keep true.
-
-Removing S1 does **not** remove the infra lane. Triage still routes `blocked` /
-`captcha_timeout` / `proxy*` away from heal (ADR-003), and the archive still recognises a
-403 challenge and withholds the capture; those live in the routing table and are tested
-against a fixture in `test/archive.test.ts` rather than against a Lab page.
+### M2 · One item on sale — partial breakage, the hardest kind to notice
+- After: a single product (`aurora-lamp`) renders the promotional template —
+  `.price-was` struck through beside `.price-final`, and **no `.price` at all**. The other
+  three products are byte-identical to baseline.
+- Expect: the job **succeeds**. Three of four rows are perfect, `success_rate` is fine, no
+  hard fail, no error code. Fill rate falls to 0.75 and the contract trips on the one null →
+  heal must cover both templates, not swap one selector for another.
+- Replaced the old "silent injection" (a competitor price block rendering above the real
+  one), which was a synthetic case: real stores do not inject a rival's price into your
+  markup. They do ship a promo template to a subset of items, constantly.
+- This is the beat a null-check on the whole job misses entirely — the job looked fine.
 
 ### M3 · Re-nest — structure moves, not names
 - After: the price moves two levels deeper, into `span[data-testid="price-value"]`. No class
@@ -55,6 +49,25 @@ against a fixture in `test/archive.test.ts` rather than against a Lab page.
 - Shipped as M3 rather than S2. The S series meant "must NOT heal", and this heals — it is
   parser breakage like M1 and M2, just expressed as depth rather than as a name. With S1
   removed there was nothing else in that series, so the series is gone and the label with it.
+
+### M4 · Build-hashed class names — the rename nobody wrote
+- After: every semantic class becomes its CSS-modules twin: `.price` → `.Price_value__k39fa`,
+  `.title` → `.Title_heading__8b2c1`. Nothing moved; every name is now meaningless.
+- Expect: all selectors miss at once. The DOM diff degrades to "this whole subtree is
+  different" — true and nearly useless — so `value_locations` carries the diagnosis instead.
+  Heal must retarget on structure or a stable attribute.
+- Real cause: a Next.js / styled-components / CSS-modules rebuild. Deploys do this without
+  anyone editing markup, which is why a class-based scraper rots on someone else's release.
+- The hash is stable across renders on purpose. A per-request hash is a different failure
+  (and an undiagnosable one).
+
+### M5 · Localised price format — the selector is fine, the value is not
+- After: the price element and its class are untouched; the TEXT becomes `USD 49,99` —
+  currency code, comma decimal.
+- Expect: the selector still matches, the field still fills, and the **value** fails its
+  declared `number` type. The DOM diff is completely empty — nothing moved — so this is the
+  one scenario a diff-only diagnosis cannot see at all.
+- Real cause: geo-aware rendering, a currency switcher, a CDN answering from another region.
 
 ## Stretch (Tier 3) / cut-first
 

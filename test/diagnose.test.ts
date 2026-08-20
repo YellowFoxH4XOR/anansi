@@ -11,7 +11,9 @@ import type { Incident } from "../packages/core/types.js";
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const baseline = productPage(echo, "none");
 const renamed = productPage(echo, "rename");
-const injected = productPage(echo, "inject");
+const renested = productPage(echo, "renest");
+const hashed = productPage(echo, "hashed");
+const localised = productPage(echo, "locale");
 const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
 const echoUrl = contract.canaries[0]!.url;
 
@@ -37,16 +39,40 @@ describe("diff", () => {
     expect(d.added.some((c) => c.path.endsWith("span.price-now"))).toBe(true);
   });
 
-  it("M2: reports the injected cross-sell block as an addition", () => {
-    const d = diffHtml(baseline, injected);
-    expect(d.added.some((c) => c.path.includes("aside.crosssell"))).toBe(true);
-    expect(d.removed.length).toBe(0); // nothing was removed — that's the silent part
+  it("M3: reports the price re-nested under data-testid", () => {
+    const d = diffHtml(baseline, renested);
+    expect(d.removed.some((c) => c.path.endsWith("span.price"))).toBe(true);
+    expect(d.added.some((c) => c.path.includes("div.pricing"))).toBe(true);
+  });
+
+  it("M4: the whole subtree reads as replaced, so the diff alone cannot name the field", () => {
+    // Every class changes at once, so the smallest subtree covering the change
+    // IS the product container — the diff degrades to "this entire block is
+    // different", which is true and nearly useless. This is the case that makes
+    // value_locations load-bearing rather than decorative: the diff cannot say
+    // where the price went, and locating the known-good value can.
+    const d = diffHtml(baseline, hashed);
+    expect(d.removed.map((c) => c.path)).toEqual(["html > body > main > div.product"]);
+    expect(d.added.map((c) => c.path)).toEqual(["html > body > main > div.Product_layout__aa41c"]);
+    // A CSS-module hash is stable across renders, so unlike sc-/css- noise it
+    // must survive normalisation — otherwise the rename would be invisible.
+    expect(normalizeHtml(hashed).toString()).toContain("Price_value__k39fa");
+    expect(locateValue(hashed, "$49.99").length).toBeGreaterThan(0);
+  });
+
+  it("M5: nothing moves at all — the DOM is identical and only the text differs", () => {
+    // The teaching case for a diff-only diagnosis: it has nothing to report, and
+    // the break is real. Only the VALUE check can see this one.
+    const d = diffHtml(baseline, localised);
+    expect(d.added).toEqual([]);
+    expect(d.removed).toEqual([]);
+    expect(localised).toContain("USD 49,99");
   });
 
   it("locateValue finds where the true price still renders", () => {
-    const hits = locateValue(injected, "$49.99");
+    const hits = locateValue(renested, "$49.99");
     expect(hits.length).toBeGreaterThan(0);
-    expect(hits.some((h) => h.path.includes("div.price-block"))).toBe(true);
+    expect(hits.some((h) => h.path.includes("div.pricing"))).toBe(true);
   });
 });
 
@@ -56,31 +82,31 @@ describe("evidence → prompt", () => {
     scraper: "lab-storefront",
     route: "heal",
     signals: [
-      { signal: "golden_band", field: "price", url: echoUrl, detail: "12.99 outside band 42.49–57.49 (pinned 49.99 ± 15%)" },
+      { signal: "contract", field: "price", url: echoUrl, detail: "required field price was null" },
     ],
     records: [],
     snapshot_refs: [],
   };
 
-  it("builds an evidence pack naming the injected block and the true value's location", () => {
-    const ev = buildEvidence(incident, contract, baseline, injected);
+  it("builds an evidence pack naming the moved block and the true value's location", () => {
+    const ev = buildEvidence(incident, contract, baseline, renested);
     expect(ev.failing_fields).toEqual(["price"]);
-    expect(ev.dom_diff!.added.some((c) => c.path.includes("crosssell"))).toBe(true);
+    expect(ev.dom_diff!.added.some((c) => c.path.includes("pricing"))).toBe(true);
     expect(ev.value_locations.some((l) => l.field === "price" && l.found_at.length > 0)).toBe(true);
   });
 
   it("prompt stays under the 1000-char CLI cap and cites the located change", () => {
-    const ev = buildEvidence(incident, contract, baseline, injected);
+    const ev = buildEvidence(incident, contract, baseline, renested);
     const p = buildPrompt(ev);
     expect(p.length).toBeLessThanOrEqual(PROMPT_MAX);
     expect(p).toContain("price");
-    expect(p.toLowerCase()).toContain("crosssell");
+    expect(p.toLowerCase()).toContain("pricing");
   });
 
   it("diagnoses with no baseline page at all, from known-good values alone", () => {
     // The majority case: Studio's HTML tag is opt-in, so most collectors have no
     // historical page anywhere. Requiring one confined healing to the few that do.
-    const ev = buildEvidence(incident, contract, undefined, injected, [], {
+    const ev = buildEvidence(incident, contract, undefined, renested, [], {
       [contract.canaries[0]!.url]: { price: 49.99, title: "Echo Portable Speaker" },
     });
 
@@ -96,7 +122,7 @@ describe("evidence → prompt", () => {
   });
 
   it("does not repeat a value pinned by a golden and observed in a run", () => {
-    const ev = buildEvidence(incident, contract, baseline, injected, [], {
+    const ev = buildEvidence(incident, contract, baseline, renested, [], {
       [contract.canaries[0]!.url]: { price: 49.99 },
     });
     const priceLocs = ev.value_locations.filter((l) => l.field === "price");
@@ -104,7 +130,7 @@ describe("evidence → prompt", () => {
   });
 
   it("prompt survives a pathologically large evidence pack", () => {
-    const ev = buildEvidence(incident, contract, baseline, injected, [
+    const ev = buildEvidence(incident, contract, baseline, renested, [
       "x".repeat(5000),
     ]);
     ev.dom_diff!.added = Array.from({ length: 50 }, (_, i) => ({

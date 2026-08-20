@@ -7,14 +7,16 @@
 //   - div.price-block wrapping the price on product pages (scraper wait target)
 //   - .card[data-sku] on the listing, .product[data-sku] on product pages
 //   - h1.title / .availability with exact "in stock" | "out of stock" text
-//   - M2: aside.crosssell with its own <span class="price">$12.99</span>,
-//     rendered BEFORE the real price in the DOM
+//   - M2: ONE product (aurora-lamp) renders .price-was + .price-final and no
+//     .price at all; the other three are byte-identical to baseline
+//   - M4: every class in HASHED is replaced by its build-hash twin
+//   - M5: price TEXT becomes "USD 49,99"; element and class unchanged
 //   - S2: div.pricing > div.current > span[data-testid="price-value"]
 //   - control links are exactly /__control?mutate=<id>
 // Everything else on these pages is decoration: baseline vs mutated renders
 // must differ ONLY by the mutation itself (the diff pipeline diffs them).
 
-export type Mutation = "none" | "rename" | "inject" | "renest";
+export type Mutation = "none" | "rename" | "salevariant" | "renest" | "hashed" | "locale";
 
 export const MUTATIONS: {
   id: Mutation;
@@ -41,12 +43,12 @@ export const MUTATIONS: {
     expect: "contract trip (null price) → diagnose names the rename → heal proposes .price-now → verify → promote.",
   },
   {
-    id: "inject",
+    id: "salevariant",
     tag: "M2",
-    name: "Silent injection",
+    name: "One item on sale",
     series: "M",
-    blurb: "A cross-sell strip with its own .price ($12.99) renders above the real price. No error — just wrong data.",
-    expect: "signals 1–3 all pass; golden band trips (12.99 outside 49.99 ±15%) → heal narrows the selector scope.",
+    blurb: "A single product switches to the promotional template: .price becomes .price-final, with .price-was beside it. The other three are untouched.",
+    expect: "the job SUCCEEDS — 3 of 4 rows are perfect. Fill rate falls to 0.75 → contract trips on the one null → heal covers both templates.",
   },
   {
     id: "renest",
@@ -55,6 +57,22 @@ export const MUTATIONS: {
     series: "M",
     blurb: "Price moves two levels deeper into span[data-testid=price-value].",
     expect: "structural diff pins the re-nested subtree → heal retargets via data-testid → verify gates the promotion.",
+  },
+  {
+    id: "hashed",
+    tag: "M4",
+    name: "Build-hashed class names",
+    series: "M",
+    blurb: "A framework rebuild replaces every semantic class with a content hash: .price becomes .Price_value__k39fa. Nothing moved; every name is now meaningless.",
+    expect: "all selectors miss at once → heal must retarget on structure or a stable attribute, because the new names carry nothing to match on.",
+  },
+  {
+    id: "locale",
+    tag: "M5",
+    name: "Localised price format",
+    series: "M",
+    blurb: "The price element is untouched; its TEXT becomes \"USD 49,99\" — currency code, comma decimal. Geo-rendering, a currency switcher, a CDN in another region.",
+    expect: "the selector still matches and the field still fills — the VALUE fails its declared number type → heal fixes the parse, not the selector.",
   },
 ];
 
@@ -194,7 +212,17 @@ function layout(title: string, body: string): string {
   .gallery-note { font-size:.66rem; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
   .details h1.title { font-family:var(--serif); font-weight:540; font-size:clamp(1.7rem,2.6vw,2.35rem); line-height:1.12; letter-spacing:-.01em; margin:.2rem 0 .9rem; }
   .price-block { display:flex; align-items:baseline; flex-wrap:wrap; gap:.8rem; margin:.2rem 0 1.2rem; }
-  .price-block .price, .price-block .price-now { font-family:var(--serif); font-size:1.9rem; font-weight:600; color:var(--accent-deep); }
+  /* Every price variant reads identically. A mutation must be invisible to a
+     human and obvious to a parser — if the page looked broken, the demo would be
+     about a broken page rather than about silent drift. M4's hashed twins are
+     listed alongside their semantic names for the same reason. */
+  .price-block .price, .price-block .price-now, .price-block .price-final,
+  .price-block .Price_value__k39fa, .buy-row .price, .buy-row .price-now,
+  .buy-row .price-final, .buy-row .Price_value__k39fa { font-family:var(--serif); font-size:1.9rem; font-weight:600; color:var(--accent-deep); }
+  .buy-row .price, .buy-row .price-now, .buy-row .price-final, .buy-row .Price_value__k39fa { font-size:1.05rem; }
+  .price-was, .buy-row .price-was { font-size:1.05rem; color:var(--faint); text-decoration:line-through; }
+  .PriceBlock_root__2d7be { display:flex; align-items:baseline; flex-wrap:wrap; gap:.8rem; margin:.2rem 0 1.2rem; }
+  .Title_heading__8b2c1 { font-family:var(--serif); font-weight:560; }
   .price-block .was { font-size:1.05rem; }
   .price-block .availability { margin-left:0; }
   .save-chip { font-size:.66rem; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); background:#f9e9e2; border:1px solid #eed3c8; border-radius:99px; padding:.26rem .68rem; }
@@ -209,12 +237,6 @@ function layout(title: string, body: string): string {
   .perks li::before { content:"✓"; color:var(--green); font-weight:700; }
 
   /* ── Cross-sell strip (M2) ── */
-  .crosssell { background:var(--gold-bg); border:1px solid var(--gold-line); border-radius:14px; padding:1.1rem 1.3rem; margin-bottom:1.4rem; }
-  .crosssell h2 { font-family:var(--sans); font-size:.7rem; font-weight:600; letter-spacing:.18em; text-transform:uppercase; color:#96814d; margin-bottom:.55rem; }
-  .crosssell .mini { display:flex; gap:.7rem; align-items:baseline; }
-  .crosssell .thumb { font-size:1.5rem; line-height:1; align-self:center; }
-  .crosssell .title-sm { font-family:var(--serif); font-size:1rem; }
-  .crosssell .price { font-size:1.02rem; font-weight:650; color:var(--accent-deep); }
 
 
   @keyframes spin { to { transform:rotate(360deg); } }
@@ -263,24 +285,55 @@ ${body}
 
 // ─── Mutation-sensitive fragments ────────────────────────────────────────────
 
-function priceMarkup(p: Product, mutation: Mutation): string {
-  const was = p.sale_price ? `<span class="was">${money(p.price)}</span>` : "";
-  const shown = p.sale_price ?? p.price;
-  if (mutation === "rename") {
-    return `<span class="price-now">${money(shown)}</span>${was}`;
-  }
-  if (mutation === "renest") {
-    return `<div class="pricing"><div class="current"><span data-testid="price-value">${money(shown)}</span></div>${was ? `<div class="previous">${was}</div>` : ""}</div>`;
-  }
-  return `<span class="price">${money(shown)}</span>${was}`;
+/** M2 breaks exactly ONE product, not the catalogue.
+ *
+ *  This is the shape production drift usually takes: a store does not restyle
+ *  every price at once, it ships a promotional template and the items on
+ *  promotion start rendering through it. Three rows stay perfect, the job
+ *  reports success, and only fill rate notices. Picked as the item that already
+ *  carries a sale price, because that is the row a real promo template claims. */
+const SALE_VARIANT_SKU = "aurora-lamp";
+
+/** M4: what a bundler emits when semantic class names go through CSS modules.
+ *  Stable across renders on purpose — a hash that changed every request would be
+ *  a different failure (and undiagnosable), not this one. */
+const HASHED: Record<string, string> = {
+  price: "Price_value__k39fa",
+  "price-block": "PriceBlock_root__2d7be",
+  title: "Title_heading__8b2c1",
+  availability: "Stock_label__f01d9",
+  product: "Product_layout__aa41c",
+  card: "Card_root__71e0b",
+};
+
+/** Class name as the page would render it under the current mutation. */
+function k(name: string, mutation: Mutation): string {
+  return mutation === "hashed" ? (HASHED[name] ?? name) : name;
 }
 
-function crosssell(mutation: Mutation): string {
-  if (mutation !== "inject") return "";
-  return `<aside class="crosssell">
-  <h2>Customers also bought</h2>
-  <div class="mini"><span class="thumb">📱</span><span class="title-sm">Clip-On Phone Case</span><span class="price">$12.99</span></div>
-</aside>`;
+/** M5: the same number, rendered for another locale. Currency code instead of a
+ *  symbol, comma decimal separator — what a geo-aware CDN or a currency switcher
+ *  actually serves. The element and its class are untouched. */
+function moneyFor(value: number, mutation: Mutation): string {
+  return mutation === "locale" ? `USD ${value.toFixed(2).replace(".", ",")}` : money(value);
+}
+
+function priceMarkup(p: Product, mutation: Mutation): string {
+  const shown = p.sale_price ?? p.price;
+  const amount = moneyFor(shown, mutation);
+  const was = p.sale_price ? `<span class="was">${moneyFor(p.price, mutation)}</span>` : "";
+
+  if (mutation === "salevariant" && p.sku === SALE_VARIANT_SKU) {
+    // The promotional template: no .price anywhere on this one item.
+    return `<span class="price-was">${money(p.price)}</span><span class="price-final">${money(shown)}</span>`;
+  }
+  if (mutation === "rename") {
+    return `<span class="price-now">${amount}</span>${was}`;
+  }
+  if (mutation === "renest") {
+    return `<div class="pricing"><div class="current"><span data-testid="price-value">${amount}</span></div>${was ? `<div class="previous">${was}</div>` : ""}</div>`;
+  }
+  return `<span class="${k("price", mutation)}">${amount}</span>${was}`;
 }
 
 // ─── Pages ───────────────────────────────────────────────────────────────────
@@ -288,19 +341,18 @@ function crosssell(mutation: Mutation): string {
 export function productPage(p: Product, mutation: Mutation): string {
   const save = p.sale_price ? ` <span class="save-chip">Save ${savePct(p)}%</span>` : "";
   const inStock = p.availability === "in stock";
-  const inner = `${crosssell(mutation)}
-<nav class="crumbs"><a href="/">Shop</a><span>/</span><a href="/">${p.category}</a><span>/</span><b>${p.title}</b></nav>
-<div class="product" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
+  const inner = `<nav class="crumbs"><a href="/">Shop</a><span>/</span><a href="/">${p.category}</a><span>/</span><b>${p.title}</b></nav>
+<div class="${k("product", mutation)}" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
   <div class="gallery">
     <span class="hero-emoji" role="img" aria-label="${p.title}">${p.emoji}</span>
     <span class="gallery-note">Ref. ${p.sku} · studio photograph</span>
   </div>
   <div class="details">
     <div class="kicker">${p.category}</div>
-    <h1 class="title">${p.title}</h1>
-    <div class="price-block">
+    <h1 class="${k("title", mutation)}">${p.title}</h1>
+    <div class="${k("price-block", mutation)}">
       ${priceMarkup(p, mutation)}
-      <span class="availability">${p.availability}</span>${save}
+      <span class="${k("availability", mutation)}">${p.availability}</span>${save}
     </div>
     <p class="description">${p.description}</p>
     <button class="cart" type="button"${inStock ? "" : " disabled"}>${inStock ? "Add to basket" : "Sold out — notify me"}</button>
@@ -316,21 +368,22 @@ export function productPage(p: Product, mutation: Mutation): string {
 }
 
 export function listingPage(mutation: Mutation): string {
-  const priceCls = mutation === "rename" ? "price-now" : "price";
   const cards = PRODUCTS.map((p) => {
     const flag = p.availability === "out of stock"
       ? `<span class="flag flag-oos">Sold out</span>`
       : p.sale_price
         ? `<span class="flag">Save ${savePct(p)}%</span>`
         : "";
-    const was = p.sale_price ? ` <span class="was">${money(p.price)}</span>` : "";
-    return `<div class="card" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
+    // The listing renders each card through the SAME price markup as the product
+    // page, so a mutation that hits one hits the other — which is what a shared
+    // component does on a real store, and is why M2 breaks exactly one card here.
+    return `<div class="${k("card", mutation)}" data-sku="${p.sku}" data-stock="${stockAttr(p)}">
   <a class="card-link" href="/product/${p.sku}">
     <div class="thumb">${p.emoji}${flag}</div>
     <div class="card-body">
       <div class="kicker">${p.category}</div>
-      <h2 class="title">${p.title}</h2>
-      <div class="buy-row"><span class="${priceCls}">${money(p.sale_price ?? p.price)}</span>${was}<span class="availability">${p.availability}</span></div>
+      <h2 class="${k("title", mutation)}">${p.title}</h2>
+      <div class="buy-row">${priceMarkup(p, mutation)}<span class="${k("availability", mutation)}">${p.availability}</span></div>
     </div>
   </a>
 </div>`;

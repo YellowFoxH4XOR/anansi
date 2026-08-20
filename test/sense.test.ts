@@ -120,20 +120,39 @@ describe("evaluate — the five signals", () => {
     expect(result.route).toBe("config");
   });
 
-  it("M2 (silent injection): plausible wrong price passes 1–3 and trips the golden band", () => {
+  it("a plausible wrong value passes 1-3 and trips the golden band", () => {
+    // Not tied to a Lab scenario any more — the injection mutation is gone —
+    // but the signal it exercised is the one goldens exist for: a number that
+    // is well-formed, present, and wrong.
     const records = healthySweep().map((r) =>
       r.url.includes("echo-speaker") ? { ...r, fields: { ...r.fields, price: 12.99 } } : r,
     );
     const { result } = evaluate(contract, records);
     expect(result.kind).toBe("incident");
     if (result.kind !== "incident") return;
-    // The point of M2: no hard fail, no contract violation, no fill-rate drop.
+    // Nothing else can see it: no hard fail, no contract violation, no fill-rate drop.
     expect(result.signals.every((s) => s.signal === "golden_band")).toBe(true);
     expect(result.signals[0]?.field).toBe("price");
     expect(result.route).toBe("heal");
   });
 
-  it("S1 (blocked): routes to the infra lane and never to heal", () => {
+  it("M2 (one item on sale): three good rows and one null still trips the contract", () => {
+    // The production shape: a promo template ships for a subset of items, so the
+    // job succeeds and most rows are perfect. Whatever judges this must not need
+    // the whole catalogue to break before it says something.
+    const records = healthySweep().map((r) =>
+      r.url.includes("aurora-lamp") ? { ...r, fields: { ...r.fields, price: null } } : r,
+    );
+    const { result } = evaluate(contract, records);
+    expect(result.kind).toBe("incident");
+    if (result.kind !== "incident") return;
+    expect(result.signals.some((s) => s.field === "price")).toBe(true);
+    // Only the affected url is named; the other three are not accused.
+    const named = new Set(result.signals.flatMap((s) => (s.url ? [s.url] : [])));
+    expect([...named].every((u) => u.includes("aurora-lamp"))).toBe(true);
+  });
+
+  it("blocked: routes to the infra lane and never to heal", () => {
     const records = urls.map((url) => ({ url, fields: {}, error_code: "blocked", ts: 1 }));
     const { result } = evaluate(contract, records);
     expect(result.kind).toBe("incident");
