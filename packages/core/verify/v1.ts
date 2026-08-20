@@ -74,15 +74,28 @@ export function verifyV1(
           : `goldens pass on ${attributable} attributable row(s)`,
   });
 
-  // Hardcode detector: for each failing golden field, the preview value must appear
-  // in the current DOM snapshot — a heal that hardcoded the golden fails here.
+  // Hardcode detector: a value the heal claims to have scraped must actually
+  // appear in the live page. This is the gate that makes promotion safe WITHOUT
+  // goldens — it needs no opinion about which value is correct, only that the
+  // one produced was read from the page rather than written into the template.
+  //
+  // It used to iterate failingFields, which is populated from golden violations.
+  // A collector with no goldens named no fields, and a run that returned zero
+  // rows names none either — so the one check standing between a fabricated fix
+  // and production passed vacuously in exactly the two cases ANANSI now targets.
+  // With nothing named, every value in the preview is checked.
   const hardcodeFailures: string[] = [];
   for (const row of previewRows) {
     const snap = row.url ? currentSnapshots[row.url] : undefined;
     if (!snap) continue;
-    for (const field of failingFields) {
+    const fields = failingFields.length ? failingFields : Object.keys(row.fields);
+    for (const field of fields) {
       const val = row.fields[field];
       if (val == null) continue;
+      // A boolean or a one-character value appears in almost any document by
+      // chance; "present in the DOM" only means something for a value specific
+      // enough that coincidence is implausible.
+      if (String(val).trim().length < 3) continue;
       if (locateValue(snap, val).length === 0) {
         hardcodeFailures.push(`${field}="${val}" not present in the live DOM for ${row.url}`);
         fieldPassed[field] = false;

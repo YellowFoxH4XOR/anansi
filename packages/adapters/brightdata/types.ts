@@ -18,6 +18,28 @@ export type OutputSchema = {
   fields?: Record<string, { type?: string; active?: boolean }>;
 };
 
+// The contract a scraper declares about itself.
+//
+// ANANSI's first job is "did this collector break", not "is this value right".
+// Breakage is answerable from the platform alone: output_schema names the fields
+// the scraper is supposed to emit and their types, for every collector, with no
+// YAML written and nothing pinned by hand. Goldens answer the second question,
+// they need a human who knows the correct value, and requiring them scoped the
+// whole system to scrapers somebody had already hand-configured.
+//
+// No `required`: the schema does not say which fields may legitimately be empty,
+// and guessing would fail a good heal over an optional field. Types are asserted
+// because the platform states them.
+export function contractFieldsFromSchema(schema?: OutputSchema): Record<string, { type: "string" | "number"; required: boolean }> {
+  const out: Record<string, { type: "string" | "number"; required: boolean }> = {};
+  for (const [name, spec] of Object.entries(schema?.fields ?? {})) {
+    if (spec.active === false) continue;
+    if (META_SCHEMA_TYPES.has(spec.type ?? "")) continue;
+    out[name] = { type: spec.type === "number" ? "number" : "string", required: false };
+  }
+  return out;
+}
+
 // One raw output row, from a heal preview or from a collected dataset.
 //
 // Nothing here may be keyed on a field NAME the scraper author chose. Studio

@@ -20,7 +20,7 @@ import { ROUTE_PRECEDENCE, evaluate } from "../../packages/core/sense/evaluate.j
 import { classifyJob, isTerminal, jobRoute, requiredFieldsNamedIn, rowVolumeSignals, type JobHealth } from "../../packages/core/sense/job-health.js";
 import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
 import { Store, type MonitorCursor } from "../../packages/adapters/store/index.js";
-import { splitRow, type RawRow } from "../../packages/adapters/brightdata/types.js";
+import { contractFieldsFromSchema, splitRow, type OutputSchema, type RawRow } from "../../packages/adapters/brightdata/types.js";
 import type { KnownGood } from "../../packages/core/diagnose/evidence.js";
 import { driveIncident, type HealAdapter } from "./incident.js";
 import { archivePages, type ArchiveResult, type PageFetcher } from "./archive.js";
@@ -178,8 +178,19 @@ export function newestJob(jobs: readonly Job[]): Job | undefined {
 /** Lets a contract-less collector reach the existing incident pipeline without
  *  widening its signature. Every contract gate then passes vacuously, which is
  *  exactly why callers must also set requiresHumanApproval. */
-export function observedContract(collectorId: string): Contract {
-  return { scraper: collectorId, collector_id: collectorId, canaries: [], fields: {}, invariants: [], fill_rate_min: 0 };
+export function observedContract(collectorId: string, schema?: OutputSchema): Contract {
+  return {
+    scraper: collectorId,
+    collector_id: collectorId,
+    // No canaries and no goldens on purpose: those answer "is this value
+    // correct", which needs a human who knows the answer. The fields come from
+    // the platform's own output_schema, which answers the question ANANSI is
+    // actually for — "is this collector still producing what it declares".
+    canaries: [],
+    fields: contractFieldsFromSchema(schema),
+    invariants: [],
+    fill_rate_min: 0,
+  };
 }
 
 /** Union the job-level verdict with the contract-level one. A failed job whose
@@ -595,13 +606,20 @@ export class Monitor {
 
     const incident = { ...merged, route, signals, records: diagnosable, snapshot_refs: Object.values(refs) };
     this.log(`[${name}] INCIDENT (${incident.route}) from job ${job.id}: ${incident.signals.map((v) => `${v.signal}${v.field ? `:${v.field}` : ""}`).join(", ")}`);
-    const rec = await driveIncident(incident, contract ?? observedContract(collectorId), {
+    const schema = this.platformFor(collectorId)?.output_schema;
+    const rec = await driveIncident(incident, contract ?? observedContract(collectorId, schema), {
       knownGood: await this.knownGoodFor(collectorId, name, siblings, job.id),
       bd: this.deps.heal,
       llm: this.deps.llm,
       store,
       collectorId,
-      requiresHumanApproval: !contract,
+      // A human is needed only when V1 has nothing to gate on. That used to mean
+      // "no YAML contract", which paged someone for every collector nobody had
+      // hand-configured — i.e. all of them, under the scope ANANSI actually
+      // targets. What V1 needs is a declared shape to check and values it can
+      // find in the live page; output_schema supplies the first and the
+      // hardcode detector the second, neither of which needs a golden.
+      requiresHumanApproval: !contract && Object.keys(contractFieldsFromSchema(schema)).length === 0,
       log: this.log,
     });
     // The clock the verification run is measured against. Written here rather
