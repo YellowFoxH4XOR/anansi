@@ -27,7 +27,7 @@ drafting (runs D2–D5).
 DOM normalization (strip hydration ids/nonces/timestamps/CSS-in-JS suffixes) + subtree diff +
 evidence pack + LLM prompt generation (≤1000 chars, hard CLI cap) + heal/approve/**reject**
 driver — the fail path always rejects the pending fix before re-healing. **Milestone: end-to-end on M1
-only** — that is the honest Wednesday. Kick off overnight matrix: M2, S2.
+only** — that is the honest Wednesday. Kick off overnight matrix: M2, M3.
 
 ## D4 · Thu Aug 20 — Trust gate on fixtures; console starts
 Morning: verify gate (goldens, regression check, confidence, quarantine) built **against

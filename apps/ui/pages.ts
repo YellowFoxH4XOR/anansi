@@ -20,7 +20,7 @@ export const MUTATIONS: {
   id: Mutation;
   tag: string; // short chip shown on the control panel
   name: string; // display name for the control-panel row
-  series: "reset" | "M" | "S";
+  series: "reset" | "M";
   blurb: string;
   expect: string; // the one-line expected ANANSI response
 }[] = [
@@ -50,11 +50,11 @@ export const MUTATIONS: {
   },
   {
     id: "renest",
-    tag: "S2",
+    tag: "M3",
     name: "Re-nest",
-    series: "S",
+    series: "M",
     blurb: "Price moves two levels deeper into span[data-testid=price-value].",
-    expect: "structural diff pins the re-nested subtree; heal retargets via data-testid — verify gates the promotion.",
+    expect: "structural diff pins the re-nested subtree → heal retargets via data-testid → verify gates the promotion.",
   },
 ];
 
@@ -377,7 +377,6 @@ function controlRow(m: (typeof MUTATIONS)[number], current: Mutation): string {
 export function controlPage(current: Mutation): string {
   const reset = MUTATIONS.filter((m) => m.series === "reset").map((m) => controlRow(m, current)).join("\n");
   const mRows = MUTATIONS.filter((m) => m.series === "M").map((m) => controlRow(m, current)).join("\n");
-  const sRows = MUTATIONS.filter((m) => m.series === "S").map((m) => controlRow(m, current)).join("\n");
   const stateLabel = current === "none" ? "BASELINE" : current.toUpperCase();
   return `<!doctype html>
 <html lang="en">
@@ -477,8 +476,6 @@ export function controlPage(current: Mutation): string {
 ${reset}
   <div class="ghead"><span class="gname">M-SERIES</span><span class="gdesc">heal these — parser breakage ANANSI must repair autonomously</span></div>
 ${mRows}
-  <div class="ghead"><span class="gname">S-SERIES</span><span class="gdesc">must NOT heal — stress-tests structural diffing rather than parser breakage</span></div>
-${sRows}
 </main>
 <footer>deep-link any scenario: <code>/__control?mutate=&lt;id&gt;</code> · state lives in KV · <code>Cache-Control: no-store</code> everywhere</footer>
 </body>

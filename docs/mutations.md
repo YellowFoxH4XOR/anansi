@@ -47,10 +47,17 @@ Removing S1 does **not** remove the infra lane. Triage still routes `blocked` /
 403 challenge and withholds the capture; those live in the routing table and are tested
 against a fixture in `test/archive.test.ts` rather than against a Lab page.
 
-## Stretch (Tier 2) / cut-first (Tier 3)
+### M3 · Re-nest — structure moves, not names
+- After: the price moves two levels deeper, into `span[data-testid="price-value"]`. No class
+  is renamed and nothing is injected; the tree itself is different.
+- Expect: structural diff pins the re-nested subtree → heal retargets via `data-testid` →
+  verify gates the promotion.
+- Shipped as M3 rather than S2. The S series meant "must NOT heal", and this heals — it is
+  parser breakage like M1 and M2, just expressed as depth rather than as a name. With S1
+  removed there was nothing else in that series, so the series is gone and the label with it.
 
-- **S2 · Re-nest (Tier 2):** price moves two levels deeper into `span[data-testid]`. Cheap
-  once M1 works; padding for the fleet view.
+## Stretch (Tier 3) / cut-first
+
 - **S3 · SSR → XHR (Tier 3):** price leaves the HTML, arrives via `/api/price`. The correct
   heal switches to `tag_response()`. Most impressive, most likely to fail on camera —
   attempt only if D5 is clear.
