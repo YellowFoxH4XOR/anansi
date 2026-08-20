@@ -128,7 +128,11 @@ export class BrightDataApi {
     if (!apiKey) throw new Error("BrightDataApi needs an API key (BRIGHTDATA_API_KEY)");
   }
 
-  private async get<T>(path: string, query: Record<string, string | number | undefined> = {}): Promise<T> {
+  /** Returns undefined when the platform answers 200 with an EMPTY body, which
+   *  is not an error and not JSON. Callers supply the empty value that means
+   *  nothing-to-report for their own endpoint, because "no content" means
+   *  different things to a job list and to a dataset. */
+  private async get<T>(path: string, query: Record<string, string | number | undefined> = {}): Promise<T | undefined> {
     const url = new URL(path, this.base);
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined) url.searchParams.set(k, String(v));
@@ -150,7 +154,14 @@ export class BrightDataApi {
       }
       throw new BrightDataApiError(path, res.status, body);
     }
-    return (await res.json()) as T;
+    // Parse from text, not res.json(). A 200 with a zero-length body — observed
+    // live on /dca/dataset for a failed run of c_mt1mhrj82pr6gc44rw — makes
+    // res.json() throw "Unexpected end of JSON input", which the poll loop
+    // caught as a transport error and deferred, so the job was re-offered and
+    // re-thrown on every poll for the rest of the agent's life.
+    const text = await res.text();
+    if (text.trim() === "") return undefined;
+    return JSON.parse(text) as T;
   }
 
   /** Every scraper on the account. This is what makes the console self-populating:
@@ -159,6 +170,7 @@ export class BrightDataApi {
     const body = await this.get<Collector[] | { data?: Collector[]; collectors?: Collector[] }>(
       "/dca/collectors_list",
     );
+    if (!body) return [];
     if (Array.isArray(body)) return body;
     return body.data ?? body.collectors ?? [];
   }
@@ -174,7 +186,7 @@ export class BrightDataApi {
       offset: opts.offset,
       limit: opts.limit ?? 50,
     });
-    const rows = Array.isArray(body) ? body : (body.data ?? []);
+    const rows = !body ? [] : Array.isArray(body) ? body : (body.data ?? []);
     // The per-collector response omits `collector`; put it back so a failing job
     // can always be attributed to a scraper downstream.
     return rows.map((j) => ({ collector: opts.collector, ...j }));
@@ -193,7 +205,9 @@ export class BrightDataApi {
   }
 
   /** Per-job metadata: success_rate and fails are the cheap failure signal. */
-  async jobLog(jobId: string): Promise<JobLog> {
+  /** Undefined when the platform returns no log body. Callers already treat a
+   *  missing log as "no signal from here" rather than as a clean run. */
+  async jobLog(jobId: string): Promise<JobLog | undefined> {
     return this.get<JobLog>(`/dca/log/${encodeURIComponent(jobId)}`);
   }
 
@@ -214,13 +228,17 @@ export class BrightDataApi {
     const body = await this.get<{ errors?: { url?: string; error?: string }[] }>(
       `/dca/jobs/${encodeURIComponent(jobId)}/hp_errors`,
     );
-    return body.errors ?? [];
+    return body?.errors ?? [];
   }
 
   /** The collected rows. Some per-input failures ride along here as
    *  `error`/`error_code`; the ones that do not are in jobErrors() above. */
   async dataset<T = Record<string, unknown>>(collectionId: string): Promise<T[] | { status: string }> {
     const body = await this.get<T[] | Record<string, unknown>>("/dca/dataset", { id: collectionId });
+    // An empty body on a finished job is an empty result set, not a pending one.
+    // Bright Data answers /dca/dataset with 200 and zero bytes for some failed
+    // runs, and with [] for others; both mean the same thing.
+    if (!body) return [];
     if (Array.isArray(body)) return body as T[];
     // A non-array is not automatically "not ready". A scraper that emits ONE
     // record per run returns that record as a bare object — observed live on

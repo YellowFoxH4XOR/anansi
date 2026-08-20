@@ -89,7 +89,7 @@ describe("BrightDataApi", () => {
       const body = url.includes("collectors_list")
         ? [{ id: "c_a" }, { id: "c_b" }]
         : { data: [{ id: `j_for_${new URL(url).searchParams.get("collector")}`, status: "done" }] };
-      return { ok: true, status: 200, json: async () => body } as Response;
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
     }) as typeof fetch;
 
     const jobs = await new BrightDataApi("k", impl).allJobs({ fromDate: "a", toDate: "b" });
@@ -129,9 +129,30 @@ describe("BrightDataApi", () => {
     expect(transient).toEqual([false, false, false, false, false]);
   });
 
+  it("reads a 200 with an empty body as no content, not as broken JSON", async () => {
+    // Observed live: /dca/dataset answered 200 with zero bytes for a failed run
+    // of c_mt1mhrj82pr6gc44rw. res.json() throws "Unexpected end of JSON input"
+    // on that, which the poll loop caught as a transport error and deferred —
+    // so the job was re-offered and re-thrown on every poll, forever.
+    const empty = () => stubFetch(undefined, 200, "").impl;
+
+    expect(await new BrightDataApi("k", empty()).dataset("d_1")).toEqual([]);
+    expect(await new BrightDataApi("k", empty()).collectors()).toEqual([]);
+    expect(await new BrightDataApi("k", empty()).jobs({ collector: "c", fromDate: "a", toDate: "b" })).toEqual([]);
+    expect(await new BrightDataApi("k", empty()).jobErrors("j_1")).toEqual([]);
+    // A log is the one case where absence is not emptiness: no counters is not
+    // a clean run, and callers must be able to tell the difference.
+    expect(await new BrightDataApi("k", empty()).jobLog("j_1")).toBeUndefined();
+  });
+
+  it("reads a whitespace-only body the same way", async () => {
+    const { impl } = stubFetch(undefined, 200, "\n  ");
+    expect(await new BrightDataApi("k", impl).dataset("d_1")).toEqual([]);
+  });
+
   it("reads a job log and a dataset by id", async () => {
     const log = await new BrightDataApi("k", stubFetch({ id: "j_1", status: "done", success_rate: 1 }).impl).jobLog("j_1");
-    expect(log.success_rate).toBe(1);
+    expect(log!.success_rate).toBe(1);
 
     const { impl, calls } = stubFetch([{ url: "u", price: 1 }]);
     const rows = await new BrightDataApi("k", impl).dataset("d_1");
