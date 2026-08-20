@@ -47,12 +47,21 @@ export function contractFieldsFromSchema(schema?: OutputSchema): Record<string, 
   return out;
 }
 
-/** output_schema types that map onto a contract FieldSpec. Everything else —
- *  array, object, and any type Studio adds later — is carried by the scraper but
- *  not type-checked, which is the honest handling of a shape we cannot verify. */
+/** output_schema types whose VALUE shape we have actually seen and can assert.
+ *
+ *  Deliberately short, and it shrank rather than grew. `price` was in here
+ *  mapped to number, on the reasonable-sounding assumption that a field the
+ *  platform calls a price holds one. It does not: c_mt1ptxyfr93wwgxl6 emits
+ *  {"value":49.99,"currency":"USD","symbol":"$"}, so asserting number would have
+ *  failed every clean run of that scraper with "expected number, got object" —
+ *  the same mistake `array` caused a few hours earlier.
+ *
+ *  A declared type is a poor guide to a runtime value, which is why verification
+ *  now leans on the shape a scraper actually produced (core/sense/rows.ts)
+ *  rather than on this table. Nothing is added here without a live row to
+ *  confirm it. */
 const CHECKABLE_SCHEMA_TYPES: Record<string, "string" | "number" | undefined> = {
   number: "number",
-  price: "number",
   text: "string",
   string: "string",
   url: "string",

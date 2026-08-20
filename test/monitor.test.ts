@@ -270,10 +270,11 @@ describe("platform failures on a collector with no contract", () => {
     expect(rec.signal[0]!.detail).toContain("error_code=parse_error");
   });
 
-  it("stops a contract-less heal at the gate instead of auto-approving it", async () => {
-    // Without fields, goldens or invariants, V1 reduces to "preview is
-    // non-empty" plus the hardcode detector. A vacuous gate is not a gate, so
-    // the fix waits for a human.
+  it("rejects a contract-less heal that did not restore what the scraper used to emit", async () => {
+    // No contract, no goldens, no output_schema — and the gate is still not
+    // vacuous. The scraper filled `title` while it worked; this heal returns
+    // `price` instead, so it has not fixed what broke and must not be promoted.
+    // A human is not needed to see that, and used to be paged for it.
     const heal = new FakeBrightData({
       heals: [{ status: "awaiting_approval", diff_summary: "d", preview_result: [{ url: echoUrl, price: 49.99 }] }],
     });
@@ -293,7 +294,47 @@ describe("platform failures on a collector with no contract", () => {
     const ops = heal.calls.map((c) => c.op);
     expect(ops).toContain("heal");
     expect(ops).not.toContain("approve");
-    expect(store.auditLog().map((e) => e.event)).toContain("awaiting_human_approval");
+    const v1 = store.auditLog().find((e) => e.event === "verify_v1")!;
+    expect(v1.pass).toBe(false);
+    const shape = (v1.gates as { gate: string; pass: boolean }[]).find((g) => g.gate === "shape_restored")!;
+    expect(shape.pass).toBe(false);
+  });
+
+  it("promotes a contract-less heal that does restore it, with nothing configured", async () => {
+    // The same collector, the same absence of configuration — and this heal
+    // fills the path the scraper used to fill, with a value that is really on
+    // the page. That is the whole promotion criterion for a scraper of any
+    // shape: it produces what it used to, and it did not invent it.
+    const heal = new FakeBrightData({
+      heals: [
+        {
+          status: "awaiting_approval",
+          diff_summary: "d",
+          preview_result: [{ url: echoUrl, title: "Echo Portable Speaker" }],
+        },
+      ],
+    });
+    const api = new FakeApi(
+      [{ id: "c_bare" }],
+      { c_bare: [seedJob] },
+      {},
+      {
+        j_seed: [{ input: echoUrl, title: "Echo Portable Speaker" }],
+        j_fail: [{ input: echoUrl, error_code: "parse_error" }],
+      },
+    );
+    const monitor = monitorWith(api, { heal, fetchPage: pageFetcher(baselineHtml) });
+
+    await monitor.pollCollector("c_bare");
+    pushJob(api, "c_bare", failJob);
+    clock += 60_000;
+    await monitor.pollCollector("c_bare");
+
+    const v1 = store.auditLog().find((e) => e.event === "verify_v1")!;
+    const shape = (v1.gates as { gate: string; pass: boolean }[]).find((g) => g.gate === "shape_restored")!;
+    expect(shape.pass).toBe(true);
+    expect(heal.calls.map((c) => c.op)).toContain("approve");
+    expect(store.auditLog().map((e) => e.event)).not.toContain("awaiting_human_approval");
   });
 
   it("never routes blocked to heal, contract or not (ADR-003)", async () => {

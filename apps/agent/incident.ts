@@ -195,7 +195,7 @@ export async function driveIncident(
       const { url, fields } = splitRow(r);
       return { url, fields };
     });
-    const v1 = verifyV1(contract, rows, currentSnapshots, failingFields);
+    const v1 = verifyV1(contract, rows, currentSnapshots, failingFields, knownGood);
     rec.heal_attempts.push({
       prompt,
       diff_summary: heal.diff_summary ?? "",

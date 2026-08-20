@@ -8,36 +8,20 @@ import { checkFields } from "../sense/contract.js";
 import { checkInvariants } from "../sense/invariants.js";
 import { checkGolden, pinnedValue } from "../sense/goldens.js";
 import { locateValue } from "../diagnose/diff.js";
+import { locatableValues, rowShape, droppedPaths } from "../sense/rows.js";
 import { confidence } from "./confidence.js";
 
 export type PreviewRow = { url?: string; fields: Record<string, unknown> };
-
-/** Every scalar inside a field worth looking for in the page.
- *
- *  Short values are skipped: a boolean or a one-character string appears in
- *  almost any document by chance, so "present in the DOM" only means something
- *  for a value specific enough that coincidence is implausible. Bounded in both
- *  depth and count so a large nested record cannot turn one gate into a scan.
- */
-function scalarLeaves(value: unknown, depth = 0, out: (string | number)[] = []): (string | number)[] {
-  if (depth > 4 || out.length >= 20) return out;
-  if (typeof value === "number" && Number.isFinite(value)) {
-    if (String(value).length >= 3) out.push(value);
-  } else if (typeof value === "string") {
-    if (value.trim().length >= 3) out.push(value);
-  } else if (Array.isArray(value)) {
-    for (const v of value) scalarLeaves(v, depth + 1, out);
-  } else if (value && typeof value === "object") {
-    for (const v of Object.values(value)) scalarLeaves(v, depth + 1, out);
-  }
-  return out;
-}
 
 export function verifyV1(
   contract: Contract,
   previewRows: PreviewRow[],
   currentSnapshots: Record<string, string>, // canary url → current (mutated) HTML
   failingFields: string[],
+  /** What this scraper emitted while it was working, by url. The shape gate
+   *  measures the healed preview against it — which is how promotion works for a
+   *  scraper nobody described, of any shape. */
+  knownGood: Record<string, Record<string, unknown>> = {},
 ): Verdict {
   const gates: GateResult[] = [];
   const fieldPassed: Record<string, boolean> = {};
@@ -121,28 +105,47 @@ export function verifyV1(
     // field, a value reformatted on the way out, a tag rendered as an
     // attribute. A fabricated record scores near zero; a real one scores high.
     if (failingFields.length) {
-      for (const field of failingFields) {
-        for (const val of scalarLeaves(row.fields[field])) {
-          if (locateValue(snap, val).length === 0) {
-            hardcodeFailures.push(`${field}="${val}" not present in the live DOM for ${row.url}`);
-            fieldPassed[field] = false;
-          }
+      const named = locatableValues(row.fields).filter((l) => failingFields.some((f) => l.path === f || l.path.startsWith(`${f}.`) || l.path.startsWith(`${f}[`)));
+      for (const leaf of named) {
+        if (locateValue(snap, leaf.value).length === 0) {
+          hardcodeFailures.push(`${leaf.path}="${leaf.value}" not present in the live DOM for ${row.url}`);
+          fieldPassed[leaf.path.split(/[.[]/)[0]!] = false;
         }
       }
     } else {
-      const leaves = Object.entries(row.fields).flatMap(([field, v]) =>
-        scalarLeaves(v).map((val) => ({ field, val })),
-      );
-      const missing = leaves.filter((l) => locateValue(snap, l.val).length === 0);
+      const leaves = locatableValues(row.fields);
+      const missing = leaves.filter((l) => locateValue(snap, l.value).length === 0);
       if (leaves.length > 0 && missing.length * 2 >= leaves.length) {
-        for (const m of missing) fieldPassed[m.field] = false;
+        for (const m of missing) fieldPassed[m.path.split(/[.[]/)[0]!] = false;
         hardcodeFailures.push(
           `${missing.length} of ${leaves.length} value(s) absent from the live DOM for ${row.url}` +
-            ` (e.g. "${String(missing[0]!.val).slice(0, 60)}") — the record reads as written, not scraped`,
+            ` (e.g. ${missing[0]!.path}="${String(missing[0]!.value).slice(0, 60)}") — the record reads as written, not scraped`,
         );
       }
     }
   }
+  // Shape gate: the healed rows must fill what this scraper used to fill.
+  //
+  // This is the check that needs nothing declared — no contract, no goldens, no
+  // output_schema. A scraper's own last good output IS its specification, and
+  // comparing leaf paths works identically for a flat row, a nested price object
+  // and a list of ten quotes. Type assertions could not do this: `price` is
+  // declared `price` and arrives as an object, `quotes` is declared `array` and
+  // arrives as records, so a declared type says little about the value.
+  const knownShape = new Set(Object.values(knownGood).flatMap((f) => [...rowShape(f)]));
+  if (knownShape.size > 0) {
+    const healedShape = new Set(previewRows.flatMap((r) => [...rowShape(r.fields)]));
+    const stillMissing = droppedPaths(knownShape, healedShape);
+    for (const path of stillMissing) fieldPassed[path.split(/[.[]/)[0]!] = false;
+    gates.push({
+      gate: "shape_restored",
+      pass: stillMissing.length === 0,
+      detail: stillMissing.length
+        ? `still not filled after the heal: ${stillMissing.slice(0, 6).join(", ")}`
+        : `every path this scraper used to fill is filled again (${knownShape.size} checked)`,
+    });
+  }
+
   gates.push({
     gate: "value_in_dom",
     pass: hardcodeFailures.length === 0,

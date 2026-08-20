@@ -110,6 +110,21 @@ function snippet(text: string, max = 300): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
+/** Parse a newline-delimited JSON body, or undefined if it is not one. */
+function jsonLines(text: string): unknown[] | undefined {
+  const lines = text.split("\n").filter((l) => l.trim() !== "");
+  if (lines.length < 2) return undefined; // a single line was already tried as JSON
+  const rows: unknown[] = [];
+  for (const line of lines) {
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      return undefined;
+    }
+  }
+  return rows;
+}
+
 /** Keys a "still building" envelope may carry. Anything else present means the
  *  object is a record the scraper produced, not a progress report about one. */
 const PENDING_ONLY_KEYS = new Set(["status", "state", "message", "job_id", "id", "collection_id"]);
@@ -161,7 +176,21 @@ export class BrightDataApi {
     // re-thrown on every poll for the rest of the agent's life.
     const text = await res.text();
     if (text.trim() === "") return undefined;
-    return JSON.parse(text) as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch (err) {
+      // /dca/dataset answers application/jsonl for some collectors: one record
+      // per line, no enclosing array. Observed live on c_mt1ptxyfr93wwgxl6,
+      // where it surfaced as "Unexpected non-whitespace character after JSON at
+      // position 426" and deferred the job on every poll. Matched on shape
+      // rather than on Content-Type so a correct body is never rejected over a
+      // header, and only accepted when EVERY line parses — a half-parsed body is
+      // a truncated response, and reading it as a short result set would be a
+      // silent false negative about how much the run collected.
+      const rows = jsonLines(text);
+      if (rows) return rows as T;
+      throw new Error(`${path} → body is neither JSON nor JSONL: ${snippet(text)}`);
+    }
   }
 
   /** Every scraper on the account. This is what makes the console self-populating:

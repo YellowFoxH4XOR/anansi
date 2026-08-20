@@ -643,13 +643,16 @@ export class Monitor {
       llm: this.deps.llm,
       store,
       collectorId,
-      // A human is needed only when V1 has nothing to gate on. That used to mean
-      // "no YAML contract", which paged someone for every collector nobody had
-      // hand-configured — i.e. all of them, under the scope ANANSI actually
-      // targets. What V1 needs is a declared shape to check and values it can
-      // find in the live page; output_schema supplies the first and the
-      // hardcode detector the second, neither of which needs a golden.
-      requiresHumanApproval: !contract && Object.keys(contractFieldsFromSchema(schema)).length === 0,
+      // A human is needed only when V1 has nothing to gate on.
+      //
+      // That is now a much narrower case than "no YAML contract", which paged
+      // someone for every scraper nobody had hand-configured. V1 can gate on the
+      // shape this scraper itself produced while it was working — no contract,
+      // no goldens, no output_schema required — so a human is called only when
+      // there is no known-good output either, which means nothing exists to
+      // measure a fix against.
+      requiresHumanApproval:
+        !contract && Object.keys(knownGood).length === 0 && Object.keys(contractFieldsFromSchema(schema)).length === 0,
       log: this.log,
     });
     // The clock the verification run is measured against. Written here rather
