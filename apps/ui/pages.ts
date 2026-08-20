@@ -327,14 +327,44 @@ export function productPage(p: Product): string {
   return layout(p.title, body);
 }
 
+/** L2's Load more, working the way a real one works.
+ *
+ *  The held-back cards must be genuinely ABSENT from the served HTML, not merely
+ *  hidden. A cheerio-style `$('.card')` ignores CSS entirely, so cards behind
+ *  `display:none` would still be found and L2 would stop breaking discovery at
+ *  all — the scenario would render as a broken-looking page that changes
+ *  nothing, which is the opposite of what the Lab is for.
+ *
+ *  So the markup ships base64-encoded inside a script tag: not parsed as DOM,
+ *  and not matchable by a raw-text search for `class="card"` either. Clicking
+ *  decodes and appends it, which is what a human needs to see and what a scraper
+ *  that never clicks will never get. Decoded through TextDecoder because atob
+ *  yields latin1 and these cards carry emoji. */
+function loadMore(cardsHtml: string, count: number): string {
+  const payload = Buffer.from(cardsHtml, "utf8").toString("base64");
+  return `
+<div class="more"><button class="load-more" type="button" data-remaining="${count}">Load ${count} more</button></div>
+<script id="held-cards" type="application/base64">${payload}</script>
+<script>
+document.querySelector('.load-more').addEventListener('click', function () {
+  var raw = document.getElementById('held-cards').textContent.trim();
+  var bytes = Uint8Array.from(atob(raw), function (c) { return c.charCodeAt(0); });
+  document.querySelector('.grid').insertAdjacentHTML('beforeend', new TextDecoder().decode(bytes));
+  document.querySelector('.shop-head .count').textContent = document.querySelectorAll('.grid > *').length + ' objects';
+  this.closest('.more').remove();
+});
+</script>`;
+}
+
 export function listingPage(mutation: Mutation): string {
   // L-series: the index is stage 1 of a two-stage scrape. It is parsed for
   // product links, and each link becomes an input to stage 2. Nothing here
   // touches the product pages — which is the point. A stage-1 break collects
   // NOTHING while every selector on the pages it never reached still works.
   const shown = mutation === "paginate" ? PRODUCTS.slice(0, 2) : PRODUCTS;
+  const held = mutation === "paginate" ? PRODUCTS.slice(2) : [];
   const cardClass = mutation === "cardrename" ? "product-tile" : "card";
-  const cards = shown.map((p) => {
+  const card = (p: Product): string => {
     const flag = p.availability === "out of stock"
       ? `<span class="flag flag-oos">Sold out</span>`
       : p.sale_price
@@ -357,7 +387,8 @@ export function listingPage(mutation: Mutation): string {
     </div>
   </a>
 </div>`;
-  }).join("\n");
+  };
+  const cards = shown.map(card).join("\n");
   const inner = `<div class="hero">
   <div class="kicker">The Loomcart edit · considered objects, shipped weekly</div>
   <h1>Fewer things,<br>better things.</h1>
@@ -369,7 +400,7 @@ export function listingPage(mutation: Mutation): string {
 </div>
 <div class="grid">
 ${cards}
-</div>${mutation === "paginate" ? `\n<div class="more"><button class="load-more" type="button" data-remaining="${PRODUCTS.length - shown.length}">Load more</button></div>` : ""}`;
+</div>${held.length ? loadMore(held.map(card).join("\n"), held.length) : ""}`;
   const body = inner;
   return layout("Shop", body);
 }

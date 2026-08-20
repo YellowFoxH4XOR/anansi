@@ -45,12 +45,25 @@ describe("Mutation Lab", () => {
     expect((await get("/product/echo-speaker")).body).toContain('class="price">$49.99');
   });
 
-  it("L2 renders half the catalogue and offers the rest behind a button", async () => {
+  it("L2 renders half the catalogue and holds the rest behind a working button", async () => {
     await get("/__control?mutate=paginate");
     const listing = (await get("/")).body;
+
+    // Absent, not hidden. A cheerio-style $('.card') ignores CSS, so cards
+    // behind display:none would still be discovered and L2 would break nothing.
     expect((listing.match(/class="card"/g) ?? []).length).toBe(2);
-    expect(listing).toContain("load-more");
     expect(listing).toContain('data-remaining="2"');
+    expect(listing).toContain("addEventListener('click'");
+
+    // …and the button actually does something. A control that does nothing is a
+    // page a human can see is broken, which is the opposite of silent drift.
+    const payload = /id="held-cards"[^>]*>([^<]+)</.exec(listing)![1]!.trim();
+    const revealed = Buffer.from(payload, "base64").toString("utf8");
+    expect((revealed.match(/class="card"/g) ?? []).length).toBe(2);
+    expect(revealed).toContain('data-sku="graphite-keyboard"');
+    expect(revealed).toContain('data-sku="tidal-bottle"');
+    // Emoji must survive the round trip — atob alone yields latin1.
+    expect(revealed).toMatch(/[\u{1F300}-\u{1FAFF}]/u);
   });
 
   it("L3 keeps the anchors matching but empties their href", async () => {

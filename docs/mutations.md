@@ -58,7 +58,11 @@ this one did not.
 ### L2 · Half the catalogue behind "Load more"
 - After: the index renders 2 of 4 tiles; the rest arrive only on a click.
 - Expect: the row count halves on a clean run. Nothing is renamed and nothing errors, so no
-  selector is wrong — only volume against this collector's own history can see it.
+  selector is wrong — only the pages the last good run collected can say what is missing.
+- The held-back cards are genuinely **absent** from the served HTML, shipped base64-encoded
+  inside a `<script>` and appended on click. Hiding them with `display:none` would not work:
+  a cheerio-style `$('.card')` ignores CSS, so all four would still be discovered and the
+  scenario would break nothing while looking like it did.
 
 ### L3 · Links go JS-driven
 - After: `href="#"`, real path in `data-href`. An SPA migration.
