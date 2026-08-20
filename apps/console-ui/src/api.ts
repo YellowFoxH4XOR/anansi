@@ -31,7 +31,10 @@ export type JobVerdict = "ok" | "partial" | "failed" | "unknown" | "seeded" | "i
 export type ContractDepth = "pinned" | "none" | "unknown";
 export type RunTick = { job_id: string; verdict: JobVerdict; ts: number };
 /** A collector discovered on the platform. Contracts are an optional overlay:
- *  `contract: "none"` is a fully monitored scraper, just without goldens. */
+ *  `contract: "none"` is a fully monitored scraper. It is checked against the
+ *  output_schema Bright Data publishes for it; a contract only adds golden
+ *  values on top, which answer "is the data right" rather than "did this
+ *  break". */
 export type FleetEntry = {
   /** Internal store key. Not a name anyone can look up in Scraper Studio. */
   name: string;

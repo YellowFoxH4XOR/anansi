@@ -140,17 +140,12 @@ function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: 
           <Chip
             color="var(--warn)"
             border="var(--warn)"
-            title={`Bright Data has run this roughly every ${humanGap(expectedEveryMs)}, learned from its own run history — and the last one finished longer ago than that. A run that never happens produces no job and no error, so nothing else here would mention it. ANANSI cannot start one: check the schedule in Scraper Studio.`}
+            title={`Bright Data runs this roughly every ${humanGap(expectedEveryMs)} — and the last one finished longer ago than that. A run that never happens produces no job and no error, so nothing else here would mention it. ANANSI cannot start one: check the schedule in Scraper Studio.`}
           >
             ⏳ overdue · expected every {humanGap(expectedEveryMs)}
           </Chip>
         )}
       </div>
-      {contract === "none" && (
-        <span className="text-[11px]" style={{ color: "var(--muted)" }}>
-          Add a contract naming this collector_id to check field values as well as run failures.
-        </span>
-      )}
       {openIncident && (
         <Link
           to={`/incident/${openIncident.id}`}

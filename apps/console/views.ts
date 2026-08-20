@@ -87,10 +87,10 @@ ${refreshScript}
 export function fleetStrip(fleet: FleetEntry[]): string {
   const chips = fleet
     .map((f) => {
-      // The platform id is the identity; a store key equal to it means no
-      // contract names this collector, so it is monitored for platform
-      // failures only.
-      const depth = f.contract === "none" ? " · platform only" : f.contract === "pinned" ? " · contract" : "";
+      // A contract adds golden VALUES, not monitoring: a collector without one is
+      // fully checked against the output_schema Bright Data publishes for it. So
+      // only the extra is worth a word; "platform only" implied a deficiency.
+      const depth = f.contract === "pinned" ? " · goldens" : "";
       // What Bright Data calls it, not what a contract called it.
       const label = f.platformName ?? f.name;
       const run = f.lastRunAt ? ` · ran ${new Date(f.lastRunAt).toLocaleTimeString()}` : "";

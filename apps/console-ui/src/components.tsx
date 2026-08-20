@@ -99,21 +99,31 @@ export function RunStrip({ ticks, height = 56 }: { ticks: RunTick[]; height?: nu
   );
 }
 
-// The one place the console sells the deeper tier: a contract is optional, and
-// its absence must read as "less checking", never as "broken".
+// A contract is an EXTRA, not a tier. This used to read as an upsell — "platform
+// signals only", "add a contract to get them" — which described a real gap at the
+// time: without one, ANANSI had no declared fields to check and could not verify
+// a heal. It no longer does. Every collector is checked against the output_schema
+// Bright Data publishes for it, so a contract-less scraper is fully monitored for
+// the thing ANANSI is for: whether it still works.
+//
+// What a contract adds is golden VALUES — an assertion about what the data should
+// say, which needs a human who knows the answer. That is a different question
+// from "did this break", and the board must not imply a scraper is
+// under-watched for lacking one.
 export const DEPTH_META: Record<ContractDepth, { label: string; title: string }> = {
   pinned: {
-    label: "contract · goldens",
-    title: "A contract pins this collector: ANANSI checks golden values, CUSUM drift and invariants on top of platform failures.",
+    label: "goldens pinned",
+    title:
+      "A contract pins known-correct values for this collector, so ANANSI also checks the data is RIGHT — golden bands, CUSUM drift and invariants — on top of checking that the scraper still works.",
   },
   none: {
-    label: "platform signals only",
+    label: "schema-checked",
     title:
-      "No contract on file. ANANSI reports run failures for this scraper but cannot check goldens, CUSUM drift or invariants. Add a contract naming this collector_id to get them.",
+      "Fully monitored. ANANSI checks this collector against the output_schema Bright Data publishes for it: run failures, fields that stop filling, and whether a heal's values really appear in the live page. No contract is needed for any of that.",
   },
   unknown: {
-    label: "depth unknown",
-    title: "The agent has not recorded discovering this collector, so the console cannot tell whether a contract pins it.",
+    label: "not yet discovered",
+    title: "The agent has not recorded discovering this collector, so the console cannot yet say what it is checking.",
   },
 };
 
