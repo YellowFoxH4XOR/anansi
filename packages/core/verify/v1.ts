@@ -12,6 +12,27 @@ import { confidence } from "./confidence.js";
 
 export type PreviewRow = { url?: string; fields: Record<string, unknown> };
 
+/** Every scalar inside a field worth looking for in the page.
+ *
+ *  Short values are skipped: a boolean or a one-character string appears in
+ *  almost any document by chance, so "present in the DOM" only means something
+ *  for a value specific enough that coincidence is implausible. Bounded in both
+ *  depth and count so a large nested record cannot turn one gate into a scan.
+ */
+function scalarLeaves(value: unknown, depth = 0, out: (string | number)[] = []): (string | number)[] {
+  if (depth > 4 || out.length >= 20) return out;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (String(value).length >= 3) out.push(value);
+  } else if (typeof value === "string") {
+    if (value.trim().length >= 3) out.push(value);
+  } else if (Array.isArray(value)) {
+    for (const v of value) scalarLeaves(v, depth + 1, out);
+  } else if (value && typeof value === "object") {
+    for (const v of Object.values(value)) scalarLeaves(v, depth + 1, out);
+  }
+  return out;
+}
+
 export function verifyV1(
   contract: Contract,
   previewRows: PreviewRow[],
@@ -88,17 +109,37 @@ export function verifyV1(
   for (const row of previewRows) {
     const snap = row.url ? currentSnapshots[row.url] : undefined;
     if (!snap) continue;
-    const fields = failingFields.length ? failingFields : Object.keys(row.fields);
-    for (const field of fields) {
-      const val = row.fields[field];
-      if (val == null) continue;
-      // A boolean or a one-character value appears in almost any document by
-      // chance; "present in the DOM" only means something for a value specific
-      // enough that coincidence is implausible.
-      if (String(val).trim().length < 3) continue;
-      if (locateValue(snap, val).length === 0) {
-        hardcodeFailures.push(`${field}="${val}" not present in the live DOM for ${row.url}`);
-        fieldPassed[field] = false;
+    // Two strictnesses, because there are two questions.
+    //
+    // When a field is NAMED as broken, that exact value must come from the page:
+    // it is the one the heal claims to have fixed, so a miss is the hardcode
+    // this gate exists to catch.
+    //
+    // When nothing is named — a run that returned zero rows names nothing — the
+    // question is instead "was this whole record fabricated". Demanding every
+    // scalar match would sink correct heals over ordinary things: a derived
+    // field, a value reformatted on the way out, a tag rendered as an
+    // attribute. A fabricated record scores near zero; a real one scores high.
+    if (failingFields.length) {
+      for (const field of failingFields) {
+        for (const val of scalarLeaves(row.fields[field])) {
+          if (locateValue(snap, val).length === 0) {
+            hardcodeFailures.push(`${field}="${val}" not present in the live DOM for ${row.url}`);
+            fieldPassed[field] = false;
+          }
+        }
+      }
+    } else {
+      const leaves = Object.entries(row.fields).flatMap(([field, v]) =>
+        scalarLeaves(v).map((val) => ({ field, val })),
+      );
+      const missing = leaves.filter((l) => locateValue(snap, l.val).length === 0);
+      if (leaves.length > 0 && missing.length * 2 >= leaves.length) {
+        for (const m of missing) fieldPassed[m.field] = false;
+        hardcodeFailures.push(
+          `${missing.length} of ${leaves.length} value(s) absent from the live DOM for ${row.url}` +
+            ` (e.g. "${String(missing[0]!.val).slice(0, 60)}") — the record reads as written, not scraped`,
+        );
       }
     }
   }

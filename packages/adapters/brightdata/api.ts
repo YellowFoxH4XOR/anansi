@@ -110,6 +110,15 @@ function snippet(text: string, max = 300): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
+/** Keys a "still building" envelope may carry. Anything else present means the
+ *  object is a record the scraper produced, not a progress report about one. */
+const PENDING_ONLY_KEYS = new Set(["status", "state", "message", "job_id", "id", "collection_id"]);
+
+function isPending(body: Record<string, unknown>): boolean {
+  if (typeof body.status !== "string") return false;
+  return Object.keys(body).every((k) => PENDING_ONLY_KEYS.has(k));
+}
+
 export class BrightDataApi {
   constructor(
     private apiKey: string,
@@ -211,8 +220,16 @@ export class BrightDataApi {
   /** The collected rows. Some per-input failures ride along here as
    *  `error`/`error_code`; the ones that do not are in jobErrors() above. */
   async dataset<T = Record<string, unknown>>(collectionId: string): Promise<T[] | { status: string }> {
-    const body = await this.get<T[] | { status: string }>("/dca/dataset", { id: collectionId });
-    return body;
+    const body = await this.get<T[] | Record<string, unknown>>("/dca/dataset", { id: collectionId });
+    if (Array.isArray(body)) return body as T[];
+    // A non-array is not automatically "not ready". A scraper that emits ONE
+    // record per run returns that record as a bare object — observed live on
+    // c_mt1mhrj82pr6gc44rw, whose successful run (lines=1, fails=0) answered
+    // {"quotes":[…],"input":{…}}. Reading every object as a status envelope
+    // deferred that run forever with the reason "dataset undefined", because
+    // there was no .status to read.
+    if (isPending(body)) return body as { status: string };
+    return [body as T];
   }
 }
 

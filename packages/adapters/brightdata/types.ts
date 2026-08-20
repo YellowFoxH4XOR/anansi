@@ -35,10 +35,28 @@ export function contractFieldsFromSchema(schema?: OutputSchema): Record<string, 
   for (const [name, spec] of Object.entries(schema?.fields ?? {})) {
     if (spec.active === false) continue;
     if (META_SCHEMA_TYPES.has(spec.type ?? "")) continue;
-    out[name] = { type: spec.type === "number" ? "number" : "string", required: false };
+    // Only types the contract can actually assert. Studio also publishes `array`
+    // and `object` fields — c_mt1mhrj82pr6gc44rw declares `quotes: array` — and
+    // mapping "anything not number" to string made every clean run of that
+    // scraper fail its own contract with "expected string, got object". A field
+    // whose shape we cannot check is left unasserted rather than mis-asserted.
+    const type = CHECKABLE_SCHEMA_TYPES[spec.type ?? ""];
+    if (!type) continue;
+    out[name] = { type, required: false };
   }
   return out;
 }
+
+/** output_schema types that map onto a contract FieldSpec. Everything else —
+ *  array, object, and any type Studio adds later — is carried by the scraper but
+ *  not type-checked, which is the honest handling of a shape we cannot verify. */
+const CHECKABLE_SCHEMA_TYPES: Record<string, "string" | "number" | undefined> = {
+  number: "number",
+  price: "number",
+  text: "string",
+  string: "string",
+  url: "string",
+};
 
 // One raw output row, from a heal preview or from a collected dataset.
 //
