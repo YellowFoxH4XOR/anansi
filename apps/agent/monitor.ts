@@ -221,6 +221,15 @@ export function mergeJobHealth(health: JobHealth, sense: SenseResult, scraper: s
  *  must not open a duplicate incident — but it must not be forgotten either. */
 const DISPATCHABLE = new Set(["healthy", "watching"]);
 
+/** A run the platform's own counters call clean.
+ *
+ *  Deliberately judged from job counters alone, because this is asked BEFORE a
+ *  collector is dispatchable — there is no dataset read and no page fetch behind
+ *  this answer, so it costs nothing and cannot itself fail. */
+export function looksClean(job: Job): boolean {
+  return (job.data_lines ?? 0) > 0 && !(job.failed_pages ?? 0);
+}
+
 export class Monitor {
   private readonly cfg: MonitorConfig;
   private readonly now: () => number;
@@ -335,7 +344,21 @@ export class Monitor {
       if (store.jobLedgerState(job.id) === "handled") continue;
       if (!isTerminal(job)) continue;
 
-      const state = store.collectorState(name);
+      let state = store.collectorState(name);
+      // Quarantine was a one-way door. Nothing but a human running
+      // `collector:release` ever left it, so a collector that started working
+      // again — because someone fixed it, or the site reverted — stayed
+      // quarantined forever while its runs piled up as `deferred`. The console
+      // then reported a healthy scraper as broken indefinitely.
+      //
+      // A clean run is the platform stating the collector produces again, which
+      // is the same evidence a human would act on. Only quarantine is lifted
+      // this way: `healing` and `incident_open` mean a heal is in flight, and
+      // dispatching into one would open a duplicate incident.
+      if (state === "quarantined" && looksClean(job)) {
+        await this.liftQuarantine(name, job);
+        state = store.collectorState(name);
+      }
       if (!DISPATCHABLE.has(state)) {
         await store.deferJob(job.id, name, this.now(), `collector state=${state}`, job);
         report.jobs_deferred++;
@@ -666,6 +689,35 @@ export class Monitor {
       }
     }
     return {};
+  }
+
+  /** Return a quarantined collector to service on the evidence of a clean run.
+   *
+   *  The backlog is the subtle half. Every run since the quarantine was deferred
+   *  with its payload kept, so lifting the state alone would re-offer a queue of
+   *  OLD failures — incidents about a period that has already ended, on a
+   *  collector the platform just said is working, quite possibly re-quarantining
+   *  it on the spot. Anything that finished before the clean run is settled as
+   *  `seeded`: ledgered, visible, never re-evaluated. That is exactly what
+   *  seedCursor does with history at first boot, for the same reason. */
+  private async liftQuarantine(name: string, job: Job): Promise<void> {
+    const { store } = this.deps;
+    const recoveredMs = Date.parse(job.finished ?? job.started ?? "");
+    let superseded = 0;
+    for (const entry of store.deferredJobs(name)) {
+      if (entry.job_id === job.id) continue;
+      const ms = Date.parse(entry.job?.finished ?? entry.job?.started ?? "");
+      if (!Number.isFinite(ms) || !Number.isFinite(recoveredMs) || ms >= recoveredMs) continue;
+      await store.claimJob(entry.job_id, name, this.now());
+      await store.settleJob(entry.job_id, "seeded");
+      superseded++;
+    }
+    await store.setCollectorState(name, "healthy");
+    await store.audit({ event: "quarantine_lifted", scraper: name, job_id: job.id, superseded });
+    this.log(
+      `[${name}] job ${job.id} came back clean (${job.data_lines} row(s), 0 failed) — lifting quarantine` +
+        (superseded ? `, ${superseded} older deferred run(s) settled as history` : ""),
+    );
   }
 
   /** Canary URLs first — they are what the goldens pin. Without a contract the

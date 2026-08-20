@@ -397,6 +397,76 @@ describe("the free HTML archive", () => {
   });
 });
 
+describe("quarantine is not a one-way door", () => {
+  it("returns a quarantined collector to service when a run comes back clean", async () => {
+    // Nothing but a human running `collector:release` ever left quarantine, so a
+    // collector that started working again stayed quarantined forever while its
+    // runs piled up as "deferred" — the console reporting a healthy scraper as
+    // broken indefinitely.
+    const bad: Job = { id: "j_bad", finished: "2025-08-19T10:00:00Z", data_lines: 0, failed_pages: 1 };
+    const good: Job = { id: "j_good", finished: "2025-08-19T11:00:00Z", data_lines: 4 };
+    const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [bad] }, {}, { j_good: goldenRows() });
+    const contracts = new Map([[COLLECTOR, contract]]);
+
+    await store.ensureCollector(contract.scraper);
+    await store.setMonitorCursor(contract.scraper, { ...store.monitorCursor(contract.scraper), seeded: true });
+    await store.deferJob("j_bad", contract.scraper, clock, "collector state=quarantined", bad);
+    await store.setCollectorState(contract.scraper, "quarantined");
+
+    pushJob(api, COLLECTOR, good);
+    clock += 60 * 60_000;
+    const logs: string[] = [];
+    await monitorWith(api, { contracts, fetchPage: pageFetcher(baselineHtml), logs }).pollCollector(COLLECTOR);
+
+    expect(store.collectorState(contract.scraper)).toBe("healthy");
+    expect(logs.join(" ")).toContain("lifting quarantine");
+    expect(store.auditLog().some((e) => e.event === "quarantine_lifted")).toBe(true);
+  });
+
+  it("does not replay the backlog of failures that predate the recovery", async () => {
+    // Re-offering old deferrals would open incidents about a period that has
+    // already ended, on a collector the platform just said is working — quite
+    // possibly re-quarantining it on the spot.
+    const bad: Job = { id: "j_old", finished: "2025-08-19T10:00:00Z", data_lines: 0, failed_pages: 1 };
+    const good: Job = { id: "j_good", finished: "2025-08-19T11:00:00Z", data_lines: 4 };
+    const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [] }, {}, { j_good: goldenRows() });
+    const contracts = new Map([[COLLECTOR, contract]]);
+
+    await store.ensureCollector(contract.scraper);
+    await store.setMonitorCursor(contract.scraper, { ...store.monitorCursor(contract.scraper), seeded: true });
+    await store.deferJob("j_old", contract.scraper, clock, "collector state=quarantined", bad);
+    await store.setCollectorState(contract.scraper, "quarantined");
+
+    pushJob(api, COLLECTOR, good);
+    clock += 60 * 60_000;
+    const report = await monitorWith(api, { contracts, fetchPage: pageFetcher(baselineHtml) }).pollCollector(COLLECTOR);
+
+    expect(store.jobLedgerState("j_old")).toBe("handled");
+    expect(report.incidents_opened).toEqual([]);
+    expect(store.collectorState(contract.scraper)).toBe("healthy");
+  });
+
+  it("keeps deferring while a heal is actually in flight", async () => {
+    // healing/incident_open are not stale states to recover from: dispatching
+    // into one would open a duplicate incident for a job already being handled.
+    const good: Job = { id: "j_good", finished: "2025-08-19T11:00:00Z", data_lines: 4 };
+    const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [good] }, {}, { j_good: goldenRows() });
+
+    await store.ensureCollector(contract.scraper);
+    await store.setMonitorCursor(contract.scraper, { ...store.monitorCursor(contract.scraper), seeded: true });
+    await store.setCollectorState(contract.scraper, "healing");
+
+    clock += 60 * 60_000;
+    const report = await monitorWith(api, {
+      contracts: new Map([[COLLECTOR, contract]]),
+      fetchPage: pageFetcher(baselineHtml),
+    }).pollCollector(COLLECTOR);
+
+    expect(report.jobs_deferred).toBe(1);
+    expect(store.collectorState(contract.scraper)).toBe("healing");
+  });
+});
+
 describe("only a run that postdates the fix can verify it", () => {
   it("does not quarantine on a failure that started before the promotion", async () => {
     // Observed live on 2026-08-20: incident 855c4ad8 promoted a fix, and the
