@@ -34,7 +34,10 @@ function CommandLine({ cmd }: { cmd: string }) {
  *  URL. Previously hardcoded to `price`, which was contract-fleet thinking: on
  *  any scraper that is not a storefront it left the chart permanently blank. */
 function firstNumericSeries(runs: RunPoint[]): { field: string; url: string; points: { ts: number; v: number }[] } | null {
-  const url = runs[0]?.url;
+  // A run that collected nothing is stored with url "unknown" and no fields.
+  // Reading runs[0] blindly meant one failed run — the newest, exactly when a
+  // chart matters most — chose a url with no numbers and blanked the card.
+  const url = runs.find((r) => r.url && r.url !== "unknown" && Object.values(r.fields).some((v) => typeof v === "number"))?.url;
   if (!url) return null;
   const forUrl = runs.filter((r) => r.url === url);
   const field = forUrl
@@ -69,9 +72,13 @@ function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: 
     return () => clearInterval(t);
   }, [name]);
 
-  // A golden chart needs a contract; the run strip needs only runs. Every card
-  // gets the strip, so a contract-less collector is never a blank card.
-  const series = contract === "pinned" ? firstNumericSeries(runs) : null;
+  // The series is the scraper's OWN collected output over time, read back from
+  // Bright Data's datasets — so it needs no contract and asserts nothing about
+  // what the value ought to be. It used to be gated on `contract === "pinned"`,
+  // which hid entirely platform-sourced data behind a YAML file somebody had to
+  // write, and framed it as a golden band: a number a human supplied, that
+  // ANANSI has no way to know is right.
+  const series = firstNumericSeries(runs);
   const depth = DEPTH_META[contract];
 
   return (
@@ -102,23 +109,26 @@ function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: 
           {collectorId}
         </span>
       )}
-      {series ? (
+      {/* The value chart is extra, when there is numeric history to draw. The
+          outcome strip is not: it is how a card says whether runs are passing,
+          and swapping it out for a trend line hid that behind a chart of a
+          number whose correctness nothing here can vouch for. */}
+      {series && (
         <>
           <Sparkline points={series.points.slice(-24)} label={series.field} />
-          <div className="flex justify-between text-[11px]" style={{ color: "var(--muted)" }}>
-            <span title={series.url}>{series.field} · pinned field</span>
-            <span title={lastRunAt ? new Date(lastRunAt).toLocaleString() : undefined}>last run {ago(lastRunAt)}</span>
-          </div>
-        </>
-      ) : (
-        <>
-          <RunStrip ticks={recent} />
-          <div className="flex justify-between text-[11px]" style={{ color: "var(--muted)" }}>
-            <span title="Outcome of each run Bright Data performed, oldest first.">last {recent.length} run(s)</span>
-            <span title={lastRunAt ? new Date(lastRunAt).toLocaleString() : undefined}>last run {ago(lastRunAt)}</span>
+          <div className="text-[11px]" style={{ color: "var(--muted)" }}>
+            {/* What was collected, not what was expected. The chart scales to the
+                observed range and draws no band, because there is no band to
+                draw: nothing here knows the correct value. */}
+            <span title={series.url}>{series.field} · as collected</span>
           </div>
         </>
       )}
+      <RunStrip ticks={recent} />
+      <div className="flex justify-between text-[11px]" style={{ color: "var(--muted)" }}>
+        <span title="Outcome of each run Bright Data performed, oldest first.">last {recent.length} run(s)</span>
+        <span title={lastRunAt ? new Date(lastRunAt).toLocaleString() : undefined}>last run {ago(lastRunAt)}</span>
+      </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <Chip title={depth.title}>{depth.label}</Chip>
         {failed24h > 0 && (

@@ -157,7 +157,10 @@ function EvidenceView({ pack }: { pack: EvidencePack }) {
           )}
           {pack.value_locations.length > 0 && (
             <div>
-              <Caption>value locations — where the pinned values went</Caption>
+              {/* "pinned" was only ever true for goldens a human wrote. These now come
+                  from the scraper's own last correct output too, which is the source
+                  that exists for every collector. */}
+              <Caption>value locations — where the last known-good values render now</Caption>
               <div className="mt-1.5 flex flex-col gap-1">
                 {pack.value_locations.map((v) => (
                   <div key={v.field} className="text-[12px] leading-relaxed">
