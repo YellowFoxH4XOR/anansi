@@ -52,7 +52,7 @@ without one.
 | `BRIGHTDATA_API_KEY` | *(unset)* | **Required.** Reads `collectors_list` and job history. The same key the CLI uses, so one secret covers both |
 | `ANANSI_ADAPTER` | `real` | Selects the **heal** seam only: `real` = the Bright Data CLI · `fake` = banked offline fixtures. Reading job history is always REST and is never adapter-selected |
 | `ANANSI_LAB_BASE` | `http://lab:4600` | Optional **fetch-side** shortcut: the archive's own free GET of a canary host is redirected here. It does **not** rewrite the contract — see below |
-| `ANANSI_POLL_SECONDS` | `60` | How often the agent reads job history. Detection latency, not cost: a poll spends no page loads |
+| `ANANSI_POLL_SECONDS` | `10` | How often the agent reads job history. Detection latency, not cost: a poll is 2-3 REST reads (~850ms each) and spends no page loads. Raise it only if the account rate-limits |
 | `WITH_BRIGHTDATA_CLI` | `false` | Build arg — installs the `brightdata` CLI into the agent image. Flip to `true` before real heals |
 | `GEMINI_API_KEY` | *(unset)* | Optional. Gemini writes the heal prompt; without it the deterministic template renderer is used |
 

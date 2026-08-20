@@ -48,12 +48,12 @@ export const DEFAULT_MONITOR_CONFIG: MonitorConfig = {
   // each against a live account — and spends no page loads, so the old 60s was
   // conservatism with nothing to conserve: it just meant a broken run sat
   // unnoticed for up to a minute. Raise it only if the account rate-limits.
-  pollSeconds: 60,
+  pollSeconds: 10,
   jitterPct: 10,
   // How long a discovered scraper can stay invisible. Same reasoning: this is
   // one cheap call, and at 5 minutes a scraper built in Studio took five
   // minutes to appear on a board whose whole claim is that it self-populates.
-  collectorRefreshMs: 5 * 60_000,
+  collectorRefreshMs: 60_000,
   lookbackDays: 1,
   retentionDays: 16,
   maxArchiveUrlsPerJob: 8,

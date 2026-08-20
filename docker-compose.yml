@@ -76,7 +76,7 @@ services:
       - BRIGHTDATA_API_KEY=${BRIGHTDATA_API_KEY:-}
       # Detection latency, not cost: polling spends no page loads, so this can
       # be tightened freely. Bright Data owns the collection schedule.
-      - ANANSI_POLL_SECONDS=${ANANSI_POLL_SECONDS:-60}
+      - ANANSI_POLL_SECONDS=${ANANSI_POLL_SECONDS:-10}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     volumes:
       - anansi-data:/data
