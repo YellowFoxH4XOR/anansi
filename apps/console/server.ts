@@ -43,8 +43,10 @@ async function diffPayload(rec: IncidentRecord) {
   if (rec.evidence_ref) {
     try {
       evidence = JSON.parse(await store.snapshot(rec.evidence_ref)) as EvidencePack;
-      removed = evidence.dom_diff.removed.map((c) => c.path);
-      added = evidence.dom_diff.added.map((c) => c.path);
+      // Absent whenever the collector kept no baseline page; the stage view
+      // falls back to value_locations, which is the actionable half anyway.
+      removed = evidence.dom_diff?.removed.map((c) => c.path) ?? [];
+      added = evidence.dom_diff?.added.map((c) => c.path) ?? [];
     } catch {
       /* evidence not yet written */
     }

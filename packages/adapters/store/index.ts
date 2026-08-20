@@ -136,6 +136,25 @@ export class Store {
     return rs[rs.length - 1]?.snapshot_ref;
   }
 
+  /** The values this scraper last produced correctly, by url then field.
+   *
+   *  This is the baseline that exists for EVERY collector. An archived page does
+   *  not: Studio's HTML tag is opt-in, so most scrapers have no historical page
+   *  anywhere, and gating Diagnose on one confined it to the few that do. A row
+   *  the scraper emitted while healthy is its own statement of what right looks
+   *  like, and Diagnose only needs the value — it locates it in the live page. */
+  lastGoodFields(scraper: string): Record<string, Record<string, unknown>> {
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const r of this.runs(scraper)) {
+      if (r.error_code || r.healthy !== true) continue;
+      if (!r.url || r.url === "unknown") continue;
+      const fields = Object.fromEntries(Object.entries(r.fields).filter(([, v]) => v != null));
+      if (Object.keys(fields).length === 0) continue;
+      out[r.url] = fields; // later runs win: newest correct output for that url
+    }
+    return out;
+  }
+
   // --- incidents (event-sourced: append updates, last write wins) ---------
   async putIncident(rec: IncidentRecord): Promise<void> {
     await appendFile(this.file("incidents.jsonl"), `${JSON.stringify(rec)}\n`);

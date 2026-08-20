@@ -20,8 +20,11 @@ function render(ev: EvidencePack, level: number): string {
       : `Scraper failed: ${ev.signals[0]?.detail ?? "unknown"}.`;
   lines.push(symptom);
 
-  const rm = ev.dom_diff.removed.slice(0, level >= 2 ? 1 : 2);
-  const ad = ev.dom_diff.added.slice(0, level >= 2 ? 1 : 2);
+  // No baseline page → no diff. The prompt still works: value_locations below
+  // tells the healer where the right value renders today, which is the part it
+  // can act on. Saying "an element vanished" was never the actionable half.
+  const rm = (ev.dom_diff?.removed ?? []).slice(0, level >= 2 ? 1 : 2);
+  const ad = (ev.dom_diff?.added ?? []).slice(0, level >= 2 ? 1 : 2);
   if (rm.length) {
     lines.push(`Page change: element ${rm.map((c) => (level >= 1 ? lastSegment(c.path) : c.path)).join("; ")} no longer exists.`);
   }

@@ -9,6 +9,8 @@
 //
 // Endpoints verified against docs.brightdata.com/api-reference/scraper-studio-api.
 
+import type { OutputSchema } from "./types.js";
+
 const BASE = "https://api.brightdata.com";
 
 /** One scraper on the account, from GET /dca/collectors_list. */
@@ -17,6 +19,12 @@ export type Collector = {
   name?: string;
   active?: boolean;
   last_run?: string;
+  /** Cadence the platform will actually run this on, in ms. Discovered, not
+   *  configured — staleness has a real expectation to measure against. */
+  schedule?: { frequency?: number; start?: string };
+  /** The scraper's declared field shape. See OutputSchema: this is the contract
+   *  ANANSI monitors against when no YAML overlay pins goldens for it. */
+  output_schema?: OutputSchema;
   [k: string]: unknown;
 };
 

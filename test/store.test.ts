@@ -52,6 +52,21 @@ describe("operator recovery", () => {
   });
 });
 
+describe("known-good values", () => {
+  it("returns the newest correct row per url and ignores failed ones", async () => {
+    const st = store;
+    await st.appendRun({ scraper: "s", url: "u1", fields: { price: 10, title: "a" }, ts: 1, healthy: true } as never);
+    await st.appendRun({ scraper: "s", url: "u1", fields: { price: 12, title: "a" }, ts: 2, healthy: true } as never);
+    // Neither of these is the scraper saying "this is right".
+    await st.appendRun({ scraper: "s", url: "u1", fields: { price: 99 }, ts: 3, healthy: false } as never);
+    await st.appendRun({ scraper: "s", url: "u2", fields: { price: 5 }, ts: 4, healthy: true, error_code: "row_error" } as never);
+    // A 0-row run's placeholder must not become a known-good value.
+    await st.appendRun({ scraper: "s", url: "unknown", fields: {}, ts: 5, healthy: true } as never);
+
+    expect(st.lastGoodFields("s")).toEqual({ u1: { price: 12, title: "a" } });
+  });
+});
+
 describe("platform row normalisation", () => {
   it("reads the snapshot from Studio's page_html and keeps it out of fields", async () => {
     // Shape taken verbatim from a live c_msyy76jk20f9e9mrh5 run.
@@ -71,6 +86,40 @@ describe("platform row normalisation", () => {
     // A 15KB document arriving as a scraped field would corrupt fill-rate,
     // PII and invariant checks, so both tag keys must be stripped.
     expect(Object.keys(run.fields).sort()).toEqual(["availability", "price", "sale_price", "title"]);
+  });
+
+  it("finds the snapshot under a name no one told it about", async () => {
+    // The point of the whole exercise: Studio publishes tag_html('x') under the
+    // author's chosen name. `page_html` is this account's spelling, not a
+    // platform contract, so a second scraper naming its tag anything else must
+    // behave identically — snapshot found, document kept out of fields.
+    const run = await rawToRun(
+      {
+        input: { url: "https://shop.example/p/1" },
+        headline: "Widget",
+        cost: 12.5,
+        dom_capture: '<!DOCTYPE html><html><body>Widget</body></html>',
+        dom_capture_url: "https://shop.example/p/1",
+      },
+      store,
+      1,
+    );
+
+    expect(run.snapshot_ref).toBeDefined();
+    // `input` arrives as an object on real dataset rows, not a bare string.
+    expect(run.url).toBe("https://shop.example/p/1");
+    expect(Object.keys(run.fields).sort()).toEqual(["cost", "headline"]);
+  });
+
+  it("drops platform columns by their declared type, not their name", async () => {
+    const run = await rawToRun(
+      { input: { url: "u" }, title: "t", collected_at: "2026-08-19T21:00:00Z" },
+      store,
+      1,
+      undefined,
+      { fields: { collected_at: { type: "timestamp", active: true }, title: { type: "text", active: true } } },
+    );
+    expect(Object.keys(run.fields)).toEqual(["title"]);
   });
 
   it("still accepts _snapshot_html from fixtures", async () => {

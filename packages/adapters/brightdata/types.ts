@@ -6,25 +6,71 @@
 // makes "ANANSI never starts a collection" a compile error rather than a
 // convention someone can forget.
 
+// The scraper's own declared shape, straight from collectors_list. This is what
+// makes the fleet self-describing: a scraper built in Studio arrives with its
+// field names and types already attached, so ANANSI needs no per-scraper file to
+// know what that scraper is supposed to produce.
+//
+// `active: false` fields are columns the author switched off — declared but never
+// emitted — so they are not part of the shape.
+export type OutputSchema = {
+  type?: string;
+  fields?: Record<string, { type?: string; active?: boolean }>;
+};
+
 // One raw output row, from a heal preview or from a collected dataset.
+//
+// Nothing here may be keyed on a field NAME the scraper author chose. Studio
+// surfaces tag_html('whatever') under the tag's own name, so `page_html` is one
+// account's spelling, not a platform contract. Names that ARE platform-owned
+// (`input`, `error`) are declared; everything else is found by value shape or by
+// its declared type in output_schema.
 export type RawRow = {
   url?: string;
-  // Dataset rows attribute the collected page as `input` or `prime_input`;
-  // heal previews and the fake adapter use `url`.
-  input?: string;
-  prime_input?: string;
-  // Scraper Studio surfaces tag_html('page_html') under the tag's own name, and
-  // auto-adds the page URL as page_html_url. Most scrapers collect no snapshot
-  // at all, which is why the HTML archive plain-fetches pages itself.
+  // Dataset rows attribute the collected page as `input` or `prime_input`.
+  // Observed live as an OBJECT — {"input":{"url":"…"}} — not the string the
+  // previous type claimed. A scraper that emits no `url` field would otherwise
+  // have handed an object downstream as its identity.
+  input?: string | { url?: string };
+  prime_input?: string | { url?: string };
+  // Our own convention for the fake adapter and heal previews, which have no
+  // output_schema to consult. Real datasets are matched on shape instead.
   _snapshot_html?: string;
-  page_html?: string;
-  page_html_url?: string;
   // Per-input failures arrive on the row under BOTH names depending on the
   // scraper; a row carrying only `error` was previously read as a clean row.
   error?: string;
   error_code?: string;
   [field: string]: unknown;
 };
+
+// Platform-owned output_schema types. These are Bright Data's own columns, not
+// scraped values, whatever the author named them — so they never reach the
+// contract. Sourced from a live collectors_list payload.
+export const META_SCHEMA_TYPES = new Set([
+  "input", "prime_input", "error", "error_code", "warning", "warning_code",
+  "timestamp", "requested_timestamp", "status_code", "page_id", "job_id",
+  "collector_id", "collector_queue", "reparse_file", "crawl_type",
+  "html_snapshot", "screenshot_snapshot", "warc_snapshot",
+]);
+
+// A whole HTML document sitting in a string field. Used to strip snapshots from
+// `fields` without knowing what the author called them — the check the old
+// name-matching was standing in for.
+const HTML_DOC = /^\s*<(!doctype|html)\b/i;
+
+export function isHtmlDocument(v: unknown): v is string {
+  return typeof v === "string" && HTML_DOC.test(v);
+}
+
+// `input` is a string on heal previews and an object on dataset rows.
+function asUrl(v: unknown): string | undefined {
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object") {
+    const u = (v as { url?: unknown }).url;
+    if (typeof u === "string") return u;
+  }
+  return undefined;
+}
 
 export type HealResponse = {
   status: "awaiting_approval" | "approved" | "failed" | string;
@@ -59,18 +105,45 @@ export function previewRows(h: HealResponse): RawRow[] {
 // the contract is evaluated against, and a 15KB HTML document arriving as if it
 // were a scraped value would corrupt fill-rate, PII and invariant checks alike.
 // `error` is stripped for the same reason — a failure message is not a value.
-export function splitRow(raw: RawRow): {
+export function splitRow(raw: RawRow, schema?: OutputSchema): {
   snapshotHtml?: string;
   url?: string;
   error_code?: string;
   fields: Record<string, unknown>;
 } {
-  const { _snapshot_html, page_html, page_html_url, url, input, prime_input, error, error_code, ...fields } = raw;
+  const { _snapshot_html, url, input, prime_input, error, error_code, ...rest } = raw;
+
+  // Two name-independent passes, because the author owns every name here.
+  // Without them a scraper whose HTML tag is called `html_dump` does not merely
+  // lose its snapshot: the document lands in `fields` and is scored as a scraped
+  // value, corrupting fill-rate, PII scanning and invariants at once.
+  let snapshotHtml = _snapshot_html;
+  // Studio publishes a tag_html('x') as `x` and auto-adds its page address as
+  // `x_url`. Deriving the companion from the snapshot field we just FOUND keeps
+  // that name-independent: whatever the author called the tag, its `_url` twin
+  // is platform bookkeeping rather than a scraped value.
+  const snapshotKeys = Object.entries(rest)
+    .filter(([, v]) => isHtmlDocument(v))
+    .map(([k]) => k);
+  const companions = new Set(snapshotKeys.map((k) => `${k}_url`));
+
+  const fields: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(rest)) {
+    if (META_SCHEMA_TYPES.has(schema?.fields?.[name]?.type ?? "")) continue;
+    if (companions.has(name)) continue;
+    if (isHtmlDocument(value)) {
+      snapshotHtml ??= value;
+      continue;
+    }
+    fields[name] = value;
+  }
+
   return {
-    snapshotHtml: _snapshot_html ?? page_html,
-    // Dataset rows carry no `url`; the collected page is `input`/`prime_input`.
-    // An unattributed row breaks goldens and last-good snapshot lookup alike.
-    url: url ?? input ?? prime_input,
+    snapshotHtml,
+    // Dataset rows carry no `url`; the collected page is `input`/`prime_input`,
+    // and arrives as {"url": …} rather than a bare string. An unattributed row
+    // breaks goldens and last-good snapshot lookup alike.
+    url: asUrl(url) ?? asUrl(input) ?? asUrl(prime_input),
     // `error` without `error_code` is a real shape: keep the failure rather than
     // letting the row pass as healthy because one of two field names was absent.
     error_code: error_code ?? codeFromError(error),

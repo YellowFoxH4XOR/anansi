@@ -30,7 +30,7 @@ describe("console stage view-model", () => {
   it("does not claim heals that never happened", () => {
     // Exactly incident 9708ba89: no baseline snapshot, so it quarantined
     // before diagnosing. No heal ran and nothing was spent.
-    const stages = stagesFor(incident({ resolution: "quarantined", last_good_ref: undefined }), []);
+    const stages = stagesFor(incident({ resolution: "quarantined", current_ref: undefined }), []);
 
     const promote = stage(stages, "5 ·");
     expect(promote.meta).not.toContain("2 failed heals");
@@ -38,7 +38,7 @@ describe("console stage view-model", () => {
 
     expect(stage(stages, "3 ·").meta).toContain("not attempted");
     // And it must say *why* diagnosis never ran, not "building evidence pack…".
-    expect(stage(stages, "2 ·").meta).toContain("nothing to diff yet");
+    expect(stage(stages, "2 ·").meta).toContain("no capture of the affected page");
   });
 
   it("reports the real number of failed heals", () => {
@@ -142,8 +142,16 @@ describe("an incident with nothing to diff is not a quarantine", () => {
     expect(promote.status).not.toBe("fail");
   });
 
-  it("explains that a baseline is what is missing", () => {
-    const stages = stagesFor(incident({ resolution: "undiagnosable", last_good_ref: undefined }), []);
-    expect(stage(stages, "2 ·").meta).toContain("nothing to diff yet");
+  it("names the capture of the live page as what is missing", () => {
+    // A missing last-good is no longer a reason to stop: most collectors keep no
+    // HTML and can never have one, so Diagnose locates known-good values in the
+    // live page instead. The only true blocker is having no live page.
+    const stages = stagesFor(incident({ resolution: "undiagnosable", current_ref: undefined }), []);
+    expect(stage(stages, "2 ·").meta).toContain("no capture of the affected page");
+  });
+
+  it("does not stall an incident merely because no baseline was ever archived", () => {
+    const healed = incident({ resolution: "promoted", last_good_ref: undefined, current_ref: "cur", prompt: "fix price" });
+    expect(stage(stagesFor(healed, []), "2 ·").meta).toContain("fix price");
   });
 });

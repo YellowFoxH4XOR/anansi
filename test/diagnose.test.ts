@@ -65,7 +65,7 @@ describe("evidence → prompt", () => {
   it("builds an evidence pack naming the injected block and the true value's location", () => {
     const ev = buildEvidence(incident, contract, baseline, injected);
     expect(ev.failing_fields).toEqual(["price"]);
-    expect(ev.dom_diff.added.some((c) => c.path.includes("crosssell"))).toBe(true);
+    expect(ev.dom_diff!.added.some((c) => c.path.includes("crosssell"))).toBe(true);
     expect(ev.value_locations.some((l) => l.field === "price" && l.found_at.length > 0)).toBe(true);
   });
 
@@ -77,11 +77,37 @@ describe("evidence → prompt", () => {
     expect(p.toLowerCase()).toContain("crosssell");
   });
 
+  it("diagnoses with no baseline page at all, from known-good values alone", () => {
+    // The majority case: Studio's HTML tag is opt-in, so most collectors have no
+    // historical page anywhere. Requiring one confined healing to the few that do.
+    const ev = buildEvidence(incident, contract, undefined, injected, [], {
+      [contract.canaries[0]!.url]: { price: 49.99, title: "Echo Portable Speaker" },
+    });
+
+    expect(ev.dom_diff).toBeUndefined();
+    // The line the healer can actually act on survives the loss of the diff.
+    expect(ev.value_locations.some((l) => l.field === "price" && l.found_at.length > 0)).toBe(true);
+
+    const p = buildPrompt(ev);
+    expect(p.length).toBeLessThanOrEqual(PROMPT_MAX);
+    expect(p).toContain("price");
+    // No baseline means nothing may be claimed about what was removed.
+    expect(p).not.toContain("no longer exists");
+  });
+
+  it("does not repeat a value pinned by a golden and observed in a run", () => {
+    const ev = buildEvidence(incident, contract, baseline, injected, [], {
+      [contract.canaries[0]!.url]: { price: 49.99 },
+    });
+    const priceLocs = ev.value_locations.filter((l) => l.field === "price");
+    expect(priceLocs).toHaveLength(1);
+  });
+
   it("prompt survives a pathologically large evidence pack", () => {
     const ev = buildEvidence(incident, contract, baseline, injected, [
       "x".repeat(5000),
     ]);
-    ev.dom_diff.added = Array.from({ length: 50 }, (_, i) => ({
+    ev.dom_diff!.added = Array.from({ length: 50 }, (_, i) => ({
       path: `div.a${i} > div.b${i} > div.${"long".repeat(40)}${i}`,
       text: "t".repeat(200),
     }));

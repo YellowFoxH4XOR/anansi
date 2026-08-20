@@ -42,18 +42,20 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
   const healStarts = by("heal_start");
   // Attempts are counted from what actually happened, never assumed.
   const attempts = Math.max(healStarts.length, rec.heal_attempts.length);
-  // driveIncident quarantines before diagnosing when it has no last-good
-  // snapshot to diff against, which is the normal state of a collector whose
-  // archive holds nothing yet. That is a different outcome from a heal that was
-  // tried and rejected, and must not be reported as one.
-  const noBaseline = rec.resolution === "undiagnosable" || (!open && attempts === 0 && rec.last_good_ref == null);
+  // "undiagnosable" now means the one thing Diagnose truly cannot work without:
+  // no capture of the affected page as it is NOW. A missing last-good is no
+  // longer part of it — most collectors keep no HTML and so can never have one,
+  // and Diagnose locates known-good values in the live page instead. Either way
+  // this is a different outcome from a heal that was tried and rejected, and
+  // must not be reported as one.
+  const noEvidence = rec.resolution === "undiagnosable" || (!open && attempts === 0 && rec.current_ref == null);
   stages.push({
     name: "2 · DIAGNOSE",
     status: rec.prompt ? "done" : open ? "live" : "fail",
     meta: rec.prompt
       ? `auto-generated heal prompt (${rec.prompt.length} chars): "${rec.prompt}"`
-      : noBaseline
-        ? "nothing to diff yet — no page has both a current capture and an archived last-good. The next clean run archives one; the collector stays watched meanwhile."
+      : noEvidence
+        ? "no capture of the affected page yet — the archive could not fetch it this round. Nothing spent; the collector stays watched."
         : open
           ? "building evidence pack…"
           : "diagnosis did not complete",
@@ -65,7 +67,7 @@ export function stagesFor(rec: IncidentRecord, events: Record<string, unknown>[]
     status: v1 ? "done" : attempts && open ? "live" : attempts ? "done" : "pending",
     meta: attempts
       ? `${attempts} attempt(s) · stops at the approval gate (never --auto-approve)`
-      : noBaseline
+      : noEvidence
         ? "not attempted — no diagnosis to heal from"
         : "waiting on diagnosis",
   });

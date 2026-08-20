@@ -13,9 +13,9 @@
 
 import { randomUUID } from "node:crypto";
 import type { Contract, Incident, IncidentRecord, RunRecord } from "../../packages/core/types.js";
-import { buildEvidence, type EvidencePack } from "../../packages/core/diagnose/evidence.js";
+import { buildEvidence, type EvidencePack, type KnownGood } from "../../packages/core/diagnose/evidence.js";
 import { verifyV1, type PreviewRow } from "../../packages/core/verify/v1.js";
-import { previewRows, splitRow, type BrightDataAdapter, type RawRow } from "../../packages/adapters/brightdata/types.js";
+import { previewRows, splitRow, type BrightDataAdapter, type OutputSchema, type RawRow } from "../../packages/adapters/brightdata/types.js";
 import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
 import { Store } from "../../packages/adapters/store/index.js";
 
@@ -44,6 +44,10 @@ export type IncidentDeps = {
    *  goldens or invariants to gate against — and a vacuous gate is not a gate,
    *  so the fix waits for a human instead of auto-approving. */
   requiresHumanApproval?: boolean;
+  /** Known-good rows the caller recovered when the store held none — see
+   *  Monitor.knownGoodFor(). Merged over the store's own, which is empty in
+   *  exactly the case this exists for. */
+  knownGood?: KnownGood;
   log?: (msg: string) => void;
 };
 
@@ -54,8 +58,9 @@ export async function rawToRun(
   store: Store,
   ts: number,
   snapshotHtml?: string,
+  schema?: OutputSchema,
 ): Promise<RunRecord> {
-  const split = splitRow(raw);
+  const split = splitRow(raw, schema);
   const html = snapshotHtml ?? split.snapshotHtml;
   const snapshot_ref = html ? await store.saveSnapshot(html) : undefined;
   return { url: split.url ?? "unknown", fields: split.fields, error_code: split.error_code, snapshot_ref, ts };
@@ -113,31 +118,42 @@ export async function driveIncident(
     ...incident.signals.flatMap((s) => (s.url ? [s.url] : [])),
     ...incident.records.flatMap((r) => (r.snapshot_ref ? [r.url] : [])),
   ];
-  const diffable = candidates
+  const scored = candidates
     .map((url) => ({
       url,
       current: incident.records.find((r) => r.url === url && r.snapshot_ref)?.snapshot_ref,
       lastGood: store.lastGoodSnapshotRef(contract.scraper, url),
     }))
-    .find((c) => c.current && c.lastGood);
+    .filter((c) => c.current);
+  // A baseline is a bonus, so prefer a page that has one — but never require it.
+  const diffable = scored.find((c) => c.lastGood) ?? scored[0];
 
-  if (!diffable?.current || !diffable.lastGood) {
-    // Absence of evidence, not evidence of a broken scraper. This used to
-    // quarantine, which stopped the monitor dispatching ANY further job for the
-    // collector — a permanent halt with no automatic way out — because we
-    // happened to have no baseline archived yet. Nothing is spent, the incident
-    // is on the record, and the collector stays watched: the next clean run
-    // archives a baseline, and the failure after that can be diagnosed.
-    log(`incident ${rec.id}: nothing to diff — no page has both a current capture and an archived last-good yet. Recorded; still watching.`);
+  if (!diffable?.current) {
+    // The one thing Diagnose genuinely cannot work without is the page as it is
+    // NOW. Everything else degrades. This used to also demand an archived
+    // last-good and quarantine without one, which scoped healing to collectors
+    // that happen to collect HTML — a minority, since Studio's tag_html is
+    // opt-in — and stalled this one permanently, because a baseline is archived
+    // only by a clean run and no run has been clean since the mutation landed.
+    log(`incident ${rec.id}: no current capture of any affected page — nothing to diagnose from. Recorded; still watching.`);
     await store.setCollectorState(contract.scraper, "healthy");
     return finish("undiagnosable");
   }
   const hitUrl = diffable.url;
-  rec.last_good_ref = diffable.lastGood;
+  if (diffable.lastGood) rec.last_good_ref = diffable.lastGood;
   rec.current_ref = diffable.current;
-  const lastGoodHtml = await store.snapshot(diffable.lastGood);
+  const lastGoodHtml = diffable.lastGood ? await store.snapshot(diffable.lastGood) : undefined;
   const currentHtml = await store.snapshot(diffable.current);
   const currentSnapshots: Record<string, string> = { [hitUrl]: currentHtml };
+
+  // What this scraper itself last emitted for these pages. Present for every
+  // collector, contract or not, HTML or not — and the source of the one line the
+  // healer can actually act on: "the correct price (49.99) renders at X now".
+  const knownGood = { ...store.lastGoodFields(contract.scraper), ...(deps.knownGood ?? {}) };
+  if (!lastGoodHtml) {
+    const n = Object.keys(knownGood).length;
+    log(`incident ${rec.id}: no baseline page for ${hitUrl} — diagnosing from ${n} known-good row(s) located in the live page instead`);
+  }
 
   const priorFailures: string[] = [];
   for (let attempt = 1; attempt <= MAX_HEAL_ATTEMPTS; attempt++) {
@@ -155,7 +171,7 @@ export async function driveIncident(
     }
 
     await store.setCollectorState(contract.scraper, "healing");
-    const evidence: EvidencePack = buildEvidence(incident, contract, lastGoodHtml, currentHtml, priorFailures);
+    const evidence: EvidencePack = buildEvidence(incident, contract, lastGoodHtml, currentHtml, priorFailures, knownGood);
     const prompt = await llm.healPrompt(evidence);
     rec.prompt = prompt;
     rec.evidence_ref = await store.saveSnapshot(JSON.stringify(evidence, null, 2));

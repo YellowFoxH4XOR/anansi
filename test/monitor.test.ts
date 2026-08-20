@@ -397,6 +397,55 @@ describe("the free HTML archive", () => {
   });
 });
 
+describe("healing a collector that keeps no baseline page", () => {
+  it("diagnoses a cold-start failure from the platform's own last good run", async () => {
+    // The stuck case, and the general one. ANANSI has observed NO healthy run —
+    // fresh deploy, or a cleared store — so it holds no archived page and no
+    // known-good rows. Requiring an archived baseline made this permanently
+    // undiagnosable: a baseline is only written by a clean run, and no run is
+    // clean while the mutation stands. But the scraper's own last correct output
+    // is sitting in the platform's job history, and that is enough.
+    const good: Job = { id: "j_history", finished: "2025-08-19T09:00:00Z", data_lines: 4 };
+    const fail1: Job = { id: "j_now1", finished: "2025-08-19T11:00:00Z", data_lines: 0, failed_pages: 1 };
+    const fail2: Job = { id: "j_now2", finished: "2025-08-19T11:05:00Z", data_lines: 0, failed_pages: 1 };
+    const api = new FakeApi(
+      [{ id: COLLECTOR }],
+      { [COLLECTOR]: [good, fail1] },
+      {
+        j_now1: { id: "j_now1", fails: 1, success_rate: 0 },
+        j_now2: { id: "j_now2", fails: 1, success_rate: 0 },
+      },
+      // The failed runs' datasets are empty — verified live against this account,
+      // where every one of seven failed jobs returned [] with HTTP 200.
+      { j_history: goldenRows(), j_now1: [], j_now2: [] },
+    );
+    const contracts = new Map([[COLLECTOR, contract]]);
+    const heal = new FakeBrightData({
+      heals: [{ status: "awaiting_approval", diff_summary: "d", preview_result: [goldenRow(0)] }],
+    });
+
+    // From nothing. Seeding ledgers the older good job away, so ANANSI never
+    // observes a healthy run and the page it fetches is already mutated — no
+    // archived baseline is reachable by any path. A 0-row failure explains
+    // nothing on its own, so the two-strike rule holds the first one at retry
+    // and the second promotes it to heal; that part is unchanged and correct.
+    const opts = { contracts, heal, fetchPage: pageFetcher(injectedHtml) };
+    await monitorWith(api, opts).pollCollector(COLLECTOR); // strike 1 — watched
+    pushJob(api, COLLECTOR, fail2);
+    clock += 60 * 60_000;
+    const report = await monitorWith(api, opts).pollCollector(COLLECTOR); // strike 2 — heal
+
+    expect(store.lastGoodSnapshotRef(contract.scraper, echoUrl)).toBeUndefined();
+
+    const rec = store.incident(report.incidents_opened[0]!)!;
+    // No baseline, so no diff — and it still got all the way to a heal.
+    expect(rec.last_good_ref).toBeUndefined();
+    expect(rec.current_ref).toBeDefined();
+    expect(rec.resolution).not.toBe("undiagnosable");
+    expect(rec.heal_attempts.length).toBeGreaterThan(0);
+  });
+});
+
 describe("the next scheduled run is the verification", () => {
   it("quarantines a promoted fix that fails the very next run, without re-healing", async () => {
     // This is what replaced Verify V2: real production rows from Bright Data's

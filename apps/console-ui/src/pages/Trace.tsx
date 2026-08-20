@@ -129,10 +129,17 @@ function EvidenceView({ pack }: { pack: EvidencePack }) {
               ))}
             </div>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <PathList title="dom nodes removed" items={pack.dom_diff.removed} tone="removed" />
-            <PathList title="dom nodes added" items={pack.dom_diff.added} tone="added" />
-          </div>
+          {pack.dom_diff ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <PathList title="dom nodes removed" items={pack.dom_diff.removed} tone="removed" />
+              <PathList title="dom nodes added" items={pack.dom_diff.added} tone="added" />
+            </div>
+          ) : (
+            <Caption>
+              no baseline page to diff — this scraper collects no HTML, so Diagnose located the known-good values in the
+              live page instead
+            </Caption>
+          )}
           {pack.value_locations.length > 0 && (
             <div>
               <Caption>value locations — where the pinned values went</Caption>

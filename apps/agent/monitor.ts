@@ -21,6 +21,7 @@ import { classifyJob, isTerminal, jobRoute, requiredFieldsNamedIn, rowVolumeSign
 import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
 import { Store, type MonitorCursor } from "../../packages/adapters/store/index.js";
 import { splitRow, type RawRow } from "../../packages/adapters/brightdata/types.js";
+import type { KnownGood } from "../../packages/core/diagnose/evidence.js";
 import { driveIncident, type HealAdapter } from "./incident.js";
 import { archivePages, type ArchiveResult, type PageFetcher } from "./archive.js";
 
@@ -327,7 +328,7 @@ export class Monitor {
       // a replay could re-spend an AI generation or approve an ungated fix.
       await store.claimJob(job.id, name, this.now());
       try {
-        const outcome = await this.handleJob(collectorId, name, job);
+        const outcome = await this.handleJob(collectorId, name, job, [...seen.values()]);
         if (outcome.deferred) {
           await store.deferJob(job.id, name, this.now(), outcome.deferred, job);
           report.jobs_deferred++;
@@ -365,6 +366,7 @@ export class Monitor {
     collectorId: string,
     name: string,
     job: Job,
+    siblings: readonly Job[] = [],
   ): Promise<{ outcome?: "success" | "partial" | "failed" | "unknown"; incidentId?: string; deferred?: string }> {
     const { store, api } = this.deps;
     const contract = this.deps.contracts.get(collectorId);
@@ -563,6 +565,7 @@ export class Monitor {
     const incident = { ...merged, route, signals, records: diagnosable, snapshot_refs: Object.values(refs) };
     this.log(`[${name}] INCIDENT (${incident.route}) from job ${job.id}: ${incident.signals.map((v) => `${v.signal}${v.field ? `:${v.field}` : ""}`).join(", ")}`);
     const rec = await driveIncident(incident, contract ?? observedContract(collectorId), {
+      knownGood: await this.knownGoodFor(collectorId, name, siblings, job.id),
       bd: this.deps.heal,
       llm: this.deps.llm,
       store,
@@ -571,6 +574,44 @@ export class Monitor {
       log: this.log,
     });
     return { outcome: health.outcome, incidentId: rec.id };
+  }
+
+  /** What this scraper last produced correctly, recovered from the PLATFORM when
+   *  our own store cannot answer.
+   *
+   *  Cold start is the case that matters. On a fresh deploy — or after the store
+   *  is cleared — ANANSI has observed no healthy run, so it holds no known-good
+   *  values, and a failure arriving before any success would be undiagnosable
+   *  for want of history it could simply have read. Bright Data keeps that
+   *  history: the newest job whose dataset has rows is the scraper's own last
+   *  correct output. Costs one GET, and only on the incident path when the store
+   *  came back empty.
+   *
+   *  Works for every collector because it reads the rows a scraper emits, not a
+   *  page it may never have collected. */
+  private async knownGoodFor(collectorId: string, name: string, siblings: readonly Job[], failedJobId: string): Promise<KnownGood> {
+    const stored = this.deps.store.lastGoodFields(name);
+    if (Object.keys(stored).length > 0) return stored;
+
+    const candidates = [...siblings]
+      .filter((j) => j.id !== failedJobId && (j.data_lines ?? 0) > 0 && !(j.failed_pages ?? 0))
+      .sort((a, b) => Date.parse(b.finished ?? b.started ?? "") - Date.parse(a.finished ?? a.started ?? ""));
+
+    for (const cand of candidates.slice(0, 3)) {
+      const rows = await this.deps.api.dataset(cand.id).catch(() => undefined);
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      const out: KnownGood = {};
+      for (const row of rows) {
+        const { url, fields } = splitRow(row as RawRow, this.platformFor(collectorId)?.output_schema);
+        const kept = Object.fromEntries(Object.entries(fields).filter(([, v]) => v != null));
+        if (url && Object.keys(kept).length) out[url] = kept;
+      }
+      if (Object.keys(out).length) {
+        this.log(`[${name}] no known-good rows in the store — recovered ${Object.keys(out).length} from job ${cand.id}, the platform's last run that produced any`);
+        return out;
+      }
+    }
+    return {};
   }
 
   /** Canary URLs first — they are what the goldens pin. Without a contract the

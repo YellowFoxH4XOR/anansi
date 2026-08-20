@@ -79,7 +79,8 @@ export type StatePayload = {
 };
 export type EvidencePack = {
   failing_fields: string[];
-  dom_diff: { added: { path: string; text?: string }[]; removed: { path: string; text?: string }[] };
+  // Optional: a collector that collects no HTML has no baseline to diff against.
+  dom_diff?: { added: { path: string; text?: string }[]; removed: { path: string; text?: string }[] };
   value_locations: { field: string; expected: unknown; found_at: { path: string }[] }[];
   prior_failures: string[];
 };
