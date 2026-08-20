@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { BrightDataApi } from "../packages/adapters/brightdata/api.js";
 import { splitRow } from "../packages/adapters/brightdata/types.js";
-import { flattenRow, rowShape, droppedPaths, locatableValues } from "../packages/core/sense/rows.js";
+import { flattenRow, rowShape, droppedPaths, locatableValues, expectedPaths, shapeDrift } from "../packages/core/sense/rows.js";
 
 const body = (payload: string, type = "application/json") =>
   new BrightDataApi("k", (async () => ({
@@ -79,5 +79,103 @@ describe("a row is read by its leaves, never by its declared types", () => {
   it("skips values too short to mean anything when located in a page", () => {
     const paths = locatableValues({ ok: true, n: 7, sku: "A1", title: "Echo Portable Speaker" }).map((l) => l.path);
     expect(paths).toEqual(["title"]);
+  });
+});
+
+describe("the failure that does not fail", () => {
+  // A scraper written the ordinary way returns a row whether or not its
+  // selectors matched:
+  //     let price_text = $('.price').text_sane();
+  //     price: price_text ? new Money(+price_text.replace(/[^0-9.]/g,''), 'USD') : null
+  // So a renamed class yields a SUCCESSFUL job — success_rate 1, no error code,
+  // no failed page — and a row with a hole in it. The platform's counters cannot
+  // see that by construction.
+  const good = {
+    "https://lab/p/1": { product_title: "Echo", price: { value: 49.99, currency: "USD" }, availability: "in stock" },
+    "https://lab/p/2": { product_title: "Aurora", price: { value: 29.99, currency: "USD" }, availability: "in stock" },
+  };
+
+  it("names the exact path that went null on an otherwise clean run", () => {
+    const drift = shapeDrift(good, [
+      { url: "https://lab/p/1", fields: { product_title: "Echo", price: null, availability: "in stock" } },
+    ]);
+    expect(drift.map((d) => d.path).sort()).toEqual(["price.currency", "price.value"]);
+  });
+
+  it("flags only the affected url when one item switches template", () => {
+    // M2: a promo template ships for one product. Three rows stay perfect, and
+    // whatever notices must not accuse them.
+    const drift = shapeDrift(good, [
+      { url: "https://lab/p/1", fields: { product_title: "Echo", price: { value: 49.99, currency: "USD" }, availability: "in stock" } },
+      { url: "https://lab/p/2", fields: { product_title: "Aurora", price: null, availability: "in stock" } },
+    ]);
+    expect([...new Set(drift.map((d) => d.url))]).toEqual(["https://lab/p/2"]);
+  });
+
+  it("treats a field only SOME good rows carried as optional", () => {
+    // A sale price on the items actually on sale. Flagging its absence would
+    // open an incident every time a promotion ended.
+    const mixed = {
+      a: { title: "A", price: 1.5, sale_price: 1 },
+      b: { title: "B", price: 2.5 },
+    };
+    expect([...expectedPaths(mixed)].sort()).toEqual(["price", "title"]);
+    expect(shapeDrift(mixed, [{ url: "a", fields: { title: "A", price: 1.5 } }])).toEqual([]);
+  });
+
+  it("says nothing about a url it has never seen working", () => {
+    expect(shapeDrift(good, [{ url: "https://lab/p/NEW", fields: {} }])).toEqual([]);
+  });
+
+  it("does not fire on a longer list", () => {
+    const before = { u: { quotes: [{ text: "one long enough" }] } };
+    const after = [{ url: "u", fields: { quotes: [{ text: "one long enough" }, { text: "another one" }] } }];
+    expect(shapeDrift(before, after)).toEqual([]);
+  });
+
+  it("cannot see a value that is wrong rather than missing", () => {
+    // M5 renders "USD 49,99"; the scraper strips non-digits to "4999" and
+    // returns 4999 — a 100x error with the shape fully intact. Stated as a
+    // limit rather than left as a surprise: this needs a value check, not a
+    // shape check.
+    const drifted = shapeDrift(good, [
+      { url: "https://lab/p/1", fields: { product_title: "Echo", price: { value: 4999, currency: "USD" }, availability: "in stock" } },
+    ]);
+    expect(drifted).toEqual([]);
+  });
+});
+
+describe("a crawl seeded at one url and following links", () => {
+  // Verbatim from c_mt1ptxyfr93wwgxl6: seeded at the storefront root, visits
+  // four product pages, so every row carries the SAME input.url and differs
+  // only in its own product_page_url.
+  const rows = ["echo-speaker", "aurora-lamp", "tidal-bottle"].map((sku) => ({
+    product_title: sku,
+    product_page_url: `https://anansi-lab.akshatkatiyar.com/product/${sku}`,
+    input: { url: "https://anansi-lab.akshatkatiyar.com" },
+  }));
+
+  it("attributes each row to its own page, not to the seed", () => {
+    // Keying on the seed collapsed four products into one: the store kept
+    // whichever row was written last, so three quarters of the known-good
+    // baseline vanished — while still looking attributed.
+    const urls = rows.map((r) => splitRow(r).url);
+    expect(new Set(urls).size).toBe(3);
+    expect(urls[0]).toContain("/product/echo-speaker");
+  });
+
+  it("will not adopt an off-host url as a row's identity", () => {
+    // An image CDN or an analytics link must not become the page ANANSI archives.
+    const r = splitRow({
+      title: "x",
+      thumbnail: "https://cdn.example.net/img/1.jpg",
+      input: { url: "https://anansi-lab.akshatkatiyar.com" },
+    });
+    expect(r.url).toBe("https://anansi-lab.akshatkatiyar.com");
+  });
+
+  it("falls back to the seed when a row has no page of its own", () => {
+    const r = splitRow({ title: "x", input: { url: "https://shop.example/list" } });
+    expect(r.url).toBe("https://shop.example/list");
   });
 });

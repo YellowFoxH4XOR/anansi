@@ -66,3 +66,40 @@ export function droppedPaths(before: Set<string>, after: Set<string>): string[] 
 export function locatableValues(fields: Record<string, unknown>): Leaf[] {
   return flattenRow(fields).filter((l) => typeof l.value !== "boolean" && String(l.value).trim().length >= 3);
 }
+
+/** Paths EVERY known-good row filled.
+ *
+ *  The intersection, not the union, and that distinction is what keeps this
+ *  quiet. A path some good rows carry and others do not is optional by
+ *  observation — a sale price on the two items that are actually on sale — and
+ *  flagging its absence would open an incident every time a promotion ended.
+ *  A path all of them carry is one this scraper is expected to produce. */
+export function expectedPaths(knownGood: Record<string, Record<string, unknown>>): Set<string> {
+  const shapes = Object.values(knownGood).map((f) => rowShape(f)).filter((s) => s.size > 0);
+  if (shapes.length === 0) return new Set();
+  return new Set([...shapes[0]!].filter((p) => shapes.every((s) => s.has(p))));
+}
+
+/** Paths a run stopped filling, per url.
+ *
+ *  This is the signal for the failure that does not fail. A scraper written the
+ *  ordinary way — `$('.price').text()`, null if the selector misses — returns a
+ *  row either way, so the job reports success with a healthy success_rate and
+ *  no error code. Nothing in the platform's own counters can see it. What
+ *  changed is the SHAPE of the output, and that is visible without a contract,
+ *  without goldens, and at any nesting depth. */
+export function shapeDrift(
+  knownGood: Record<string, Record<string, unknown>>,
+  records: readonly { url: string; fields: Record<string, unknown> }[],
+): { url: string; path: string }[] {
+  const expected = expectedPaths(knownGood);
+  if (expected.size === 0) return [];
+  const out: { url: string; path: string }[] = [];
+  for (const r of records) {
+    // Only rows we have a baseline for. A url seen for the first time has
+    // nothing to have drifted from.
+    if (!knownGood[r.url]) continue;
+    for (const path of droppedPaths(expected, rowShape(r.fields))) out.push({ url: r.url, path });
+  }
+  return out;
+}

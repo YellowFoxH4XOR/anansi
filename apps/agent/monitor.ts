@@ -22,6 +22,7 @@ import type { LlmAdapter } from "../../packages/adapters/llm/index.js";
 import { Store, type MonitorCursor } from "../../packages/adapters/store/index.js";
 import { contractFieldsFromSchema, splitRow, type OutputSchema, type RawRow } from "../../packages/adapters/brightdata/types.js";
 import type { KnownGood } from "../../packages/core/diagnose/evidence.js";
+import { shapeDrift } from "../../packages/core/sense/rows.js";
 import { driveIncident, type HealAdapter } from "./incident.js";
 import { archivePages, type ArchiveResult, type PageFetcher } from "./archive.js";
 
@@ -502,6 +503,34 @@ export class Monitor {
     // contract suppresses it only while rows actually arrived.
     const volume = contract && records.length > 0 ? [] : rowVolumeSignals(health.totals, cursor.line_counts);
 
+    // The failure that does not fail.
+    //
+    // A scraper written the ordinary way — `$('.price').text()`, null when the
+    // selector misses — returns a row whether or not it found anything. So a
+    // renamed class produces a SUCCESSFUL job: success_rate 1, no error code, no
+    // failed page, and a row with a hole in it. Nothing in the platform's
+    // counters can see that, and until now nothing in ANANSI could either
+    // without a hand-written contract.
+    //
+    // Read against the store only. This runs on every job including healthy
+    // ones, so it must stay free — the platform fallback in knownGoodFor() is
+    // for the incident path, where one extra GET is worth it.
+    // Only on a run the platform called clean. That is this detector's entire
+    // reason to exist, and confining it there is what keeps it honest: a FAILED
+    // job also stops filling its fields, but it already carries error codes and
+    // the two-strike rule, and letting drift override those would let any
+    // unparseable message ("aborted") manufacture a heal for itself.
+    const drift = health.outcome === "success" ? shapeDrift(store.lastGoodFields(name), records) : [];
+    const driftSignals: Violation[] = drift.map(({ url, path }) => ({
+      signal: "contract",
+      field: path,
+      url,
+      detail: `${path} stopped filling — this scraper produced it on every previous good run of ${url}, and the job still reported success`,
+    }));
+    if (drift.length) {
+      this.log(`[${name}] job ${job.id}: ${drift.length} field(s) stopped filling — ${[...new Set(drift.map((d) => d.path))].join(", ")}`);
+    }
+
     let sense: SenseResult = { kind: "healthy", warnings: [] };
     let nextFlags = store.flags(name);
     if (contract && records.length) {
@@ -509,7 +538,7 @@ export class Monitor {
       sense = out.result;
       nextFlags = out.flags;
     }
-    let merged = mergeJobHealth(health, sense, name, records, [...volume, ...fieldSignals]);
+    let merged = mergeJobHealth(health, sense, name, records, [...volume, ...fieldSignals, ...driftSignals]);
 
     // Two-strike rule for a failure nothing explains. Routing blind to heal
     // burns AI generations on what is usually a platform hiccup; routing it to
@@ -617,6 +646,18 @@ export class Monitor {
     const overrides: { route: Route; detail: string }[] = [];
     if (archiveRoute) {
       overrides.push({ route: archiveRoute, detail: `archive fetch returned ${[...new Set(archiveCodes)].join(", ")} → ${archiveRoute} lane` });
+    }
+    if (drift.length) {
+      // Without this the whole detection is inert. A drifted run comes back from
+      // a SUCCESSFUL job, so job health contributes no lane and sense (with no
+      // contract) contributes none either — mergeJobHealth falls through to
+      // `retry`, driveIncident takes the non-heal path, and the incident closes
+      // as "observed" having done nothing. A field that stopped filling on a
+      // page that still loads is the DOM change heal exists for.
+      overrides.push({
+        route: "heal",
+        detail: `field(s) ${[...new Set(drift.map((d) => d.path))].join(", ")} stopped filling on a run the platform called successful → heal lane`,
+      });
     }
     if (namedFields.length) {
       // routeErrorCode is right to call "Error: price missing" unknown and send

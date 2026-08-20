@@ -111,6 +111,39 @@ export function isHtmlDocument(v: unknown): v is string {
   return typeof v === "string" && HTML_DOC.test(v);
 }
 
+// The page a row is ABOUT, which is not always the page that was fetched.
+//
+// Bright Data seeds a crawl with one url and follows it: c_mt1ptxyfr93wwgxl6 is
+// seeded at the storefront root and visits four product pages, so all four rows
+// carry the SAME input.url and differ only in their own product_page_url. Keying
+// on the input collapsed four products into one — the store kept whichever row
+// was written last, so three quarters of the known-good baseline silently
+// disappeared, and it looked attributed the whole time.
+//
+// Found by value shape rather than by field name, and restricted to the input's
+// own host so an image CDN or an analytics link cannot become a row's identity.
+// It is also the page worth archiving: the row's data was scraped from there,
+// not from the seed.
+function ownUrl(row: Record<string, unknown>, inputUrl: string | undefined): string | undefined {
+  if (!inputUrl) return undefined;
+  let host: string;
+  try {
+    host = new URL(inputUrl).host;
+  } catch {
+    return undefined;
+  }
+  for (const v of Object.values(row)) {
+    if (typeof v !== "string" || v === inputUrl) continue;
+    if (!/^https?:\/\//i.test(v)) continue;
+    try {
+      if (new URL(v).host === host) return v;
+    } catch {
+      /* not a url after all */
+    }
+  }
+  return undefined;
+}
+
 // `input` is a string on heal previews and an object on dataset rows.
 function asUrl(v: unknown): string | undefined {
   if (typeof v === "string") return v;
@@ -192,7 +225,7 @@ export function splitRow(raw: RawRow, schema?: OutputSchema): {
     // Dataset rows carry no `url`; the collected page is `input`/`prime_input`,
     // and arrives as {"url": …} rather than a bare string. An unattributed row
     // breaks goldens and last-good snapshot lookup alike.
-    url: asUrl(url) ?? asUrl(input) ?? asUrl(prime_input),
+    url: asUrl(url) ?? ownUrl(rest, asUrl(input) ?? asUrl(prime_input)) ?? asUrl(input) ?? asUrl(prime_input),
     // `error` without `error_code` is a real shape: keep the failure rather than
     // letting the row pass as healthy because one of two field names was absent.
     error_code: error_code ?? codeFromError(error),
