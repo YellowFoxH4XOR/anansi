@@ -196,7 +196,13 @@ export async function driveIncident(
       return { url, fields };
     });
     const v1 = verifyV1(contract, rows, currentSnapshots, failingFields);
-    rec.heal_attempts.push({ prompt, diff_summary: heal.diff_summary ?? "", verdict: v1, ts: Date.now() });
+    rec.heal_attempts.push({
+      prompt,
+      diff_summary: heal.diff_summary ?? "",
+      ...(heal.view_url ? { view_url: heal.view_url } : {}),
+      verdict: v1,
+      ts: Date.now(),
+    });
     await store.audit({ event: "verify_v1", id: rec.id, attempt, pass: v1.pass, confidence: v1.confidence, gates: v1.gates });
 
     if (!v1.pass) {

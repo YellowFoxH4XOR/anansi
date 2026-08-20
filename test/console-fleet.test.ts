@@ -225,3 +225,52 @@ describe("the board shows what Bright Data calls a scraper", () => {
     expect(entry?.stale).toBeUndefined();
   });
 });
+
+describe("nothing on the board may be a name ANANSI invented", () => {
+  const base = {
+    collectors: { "lab-storefront": "healthy" as const },
+    discovered: { "lab-storefront": "c_abc123" },
+    jobs: [],
+  };
+
+  it("prefers the platform's own cadence over one inferred from run gaps", () => {
+    // inferSchedule reconstructs a rhythm from observed start times. That guess
+    // is least trustworthy for the collector whose runs have STOPPED, which is
+    // the only collector staleness exists to catch — and collectors_list states
+    // the real schedule outright.
+    const [entry] = buildFleet({
+      ...base,
+      cursors: {
+        "lab-storefront": {
+          platform_name: "anansi-lab",
+          platform_schedule_ms: 300_000,
+          // Gaps of ~1h, nothing like the real 5m cadence.
+          start_times_ms: [0, 3_600_000, 7_200_000, 10_800_000],
+        },
+      },
+    });
+    expect(entry!.expectedEveryMs).toBe(300_000);
+  });
+
+  it("still infers a cadence when the platform reports no schedule", () => {
+    const [entry] = buildFleet({
+      ...base,
+      cursors: {
+        "lab-storefront": { start_times_ms: [0, 60_000, 120_000, 180_000] },
+      },
+    });
+    expect(entry!.expectedEveryMs).toBe(60_000);
+  });
+
+  it("carries the platform name so nothing has to fall back to the store key", () => {
+    // "lab-storefront" is a contract's `scraper:` field. It exists nowhere in
+    // Scraper Studio, and on screen it is indistinguishable from a name that
+    // does — which is what makes rendering it a fabrication rather than a label.
+    const [entry] = buildFleet({
+      ...base,
+      cursors: { "lab-storefront": { platform_name: "anansi-lab" } },
+    });
+    expect(entry!.platformName).toBe("anansi-lab");
+    expect(entry!.collectorId).toBe("c_abc123");
+  });
+});

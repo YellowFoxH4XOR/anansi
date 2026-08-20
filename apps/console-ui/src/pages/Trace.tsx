@@ -60,6 +60,21 @@ function AttemptCard({ attempt, index }: { attempt: HealAttempt; index: number }
             >
               {attempt.diff_summary}
             </pre>
+            {/* The platform's summary says "review at view_url" and supplies the
+                address alongside it. Without this the instruction names a
+                variable, and there is no API that returns a scraper's source —
+                so this link is the only way to see the proposed code at all. */}
+            {attempt.view_url && (
+              <a
+                href={attempt.view_url}
+                target="_blank"
+                rel="noreferrer"
+                className="link-dotted mt-1.5 inline-block text-[11.5px]"
+                style={{ color: "var(--accent)" }}
+              >
+                review the proposed template in Scraper Studio →
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -213,14 +228,14 @@ export default function Trace() {
       </Panel>
     );
   }
-  const { rec, stages, evidence } = data;
+  const { rec, stages, evidence, platformName } = data;
   const resColor = resolutionMeta(rec.resolution).color;
 
   return (
     <div className="fade-in flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-bold">
-          incident <span style={{ color: "var(--muted)" }}>{rec.id}</span> · {rec.scraper}
+          incident <span style={{ color: "var(--muted)" }}>{rec.id}</span> · {platformName ?? rec.scraper}
         </h1>
         <Link
           to={`/incident/${rec.id}/diff`}

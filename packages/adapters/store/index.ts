@@ -57,6 +57,11 @@ export type MonitorCursor = {
   /** Whether the platform reports the scraper as active. A paused scraper that
    *  stops running is not overdue; it is off. */
   platform_active?: boolean;
+  /** The cadence Bright Data will actually run this on, in ms, straight from
+   *  collectors_list. Preferred over anything inferred from observed gaps: a
+   *  guess drawn from run history is wrong for exactly the collector whose runs
+   *  have stopped, which is the one staleness is meant to catch. */
+  platform_schedule_ms?: number;
   /** When a fix was promoted and the collector began watching for its
    *  verification. A run that STARTED before this ran the pre-fix template and
    *  can prove nothing about the fix, however it turns out. */

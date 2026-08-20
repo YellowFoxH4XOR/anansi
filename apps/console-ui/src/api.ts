@@ -6,7 +6,7 @@ export type Verdict = { pass: boolean; gates: GateResult[]; confidence: number }
 export type Violation = { signal: string; field?: string; url?: string; detail: string };
 // One heal attempt = one pre-approval V1 verdict. The post-approval V2 sweep is
 // gone: Bright Data's next scheduled run is the verification (ADR-005).
-export type HealAttempt = { prompt: string; diff_summary: string; verdict?: Verdict; ts: number };
+export type HealAttempt = { prompt: string; diff_summary: string; view_url?: string; verdict?: Verdict; ts: number };
 export type IncidentRecord = {
   id: string;
   scraper: string;
@@ -69,6 +69,10 @@ export type StatePayload = {
   /** Heal attempts — the only spend ANANSI initiates. Polling is free. */
   healAttempts: number;
   incidents: IncidentRecord[];
+  /** store key → what Bright Data calls the scraper. An incident record keys by
+   *  store key, which is a name a contract invented and the platform has never
+   *  heard of, so nothing may render one as an identity. */
+  platformNames?: Record<string, string>;
   /** Agent HEAL adapter: "real" (platform) · "fake" (fixtures). Monitoring is
    *  read-only in both. */
   mode?: string;
@@ -84,7 +88,13 @@ export type EvidencePack = {
   value_locations: { field: string; expected: unknown; found_at: { path: string }[] }[];
   prior_failures: string[];
 };
-export type IncidentPayload = { rec: IncidentRecord; stages: StageView[]; eventCount: number; evidence: EvidencePack | null };
+export type IncidentPayload = {
+  rec: IncidentRecord;
+  stages: StageView[];
+  eventCount: number;
+  evidence: EvidencePack | null;
+  platformName?: string | null;
+};
 export type DiffPayload = { lastGood: string | null; current: string | null; removed: string[]; added: string[]; codeDiff: string; evidence: EvidencePack | null };
 export type RunPoint = { ts: number; url: string; fields: Record<string, unknown>; healthy: boolean | null };
 

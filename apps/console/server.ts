@@ -32,9 +32,38 @@ function incidentEvents(id: string): Record<string, unknown>[] {
   return store.auditLog().filter((e) => e.id === id);
 }
 
+/** store key → what Bright Data calls the scraper.
+ *
+ *  Every scraper name this console renders has to be one the operator can find
+ *  in their own account. A store key is a contract's `scraper:` field — a string
+ *  ANANSI invented, which exists nowhere on the platform and is indistinguishable
+ *  on screen from one that does. */
+function platformNames(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const entry of fleet()) {
+    if (entry.platformName) out[entry.name] = entry.platformName;
+  }
+  return out;
+}
+
 
 async function diffPayload(rec: IncidentRecord) {
-  const pretty = (html: string) => normalizeHtml(html).toString().replaceAll("><", ">\n<");
+  // One line per element, so the diff can point at the element that changed.
+  //
+  // This split on "><" only, which requires tags to be directly adjacent. Real
+  // markup has whitespace between them, so a whole document collapsed to ~10
+  // lines — the Lab's <main> came out as a single 1182-char line — and the diff
+  // then highlighted the entire product section to report one renamed span.
+  // \s* is the whole fix: the same page now renders as 57 lines with exactly one
+  // of them differing. Text between tags deliberately does NOT split, so a value
+  // stays on the line of the element holding it.
+  const pretty = (html: string) =>
+    normalizeHtml(html)
+      .toString()
+      .replace(/>\s*</g, ">\n<")
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .join("\n");
   const lastGood = rec.last_good_ref ? pretty(await store.snapshot(rec.last_good_ref)) : null;
   const current = rec.current_ref ? pretty(await store.snapshot(rec.current_ref)) : null;
   let removed: string[] = [];
@@ -72,6 +101,7 @@ app.get("/api/state", (_req, res) => {
     // spend it can still initiate is a heal.
     healAttempts: store.creditsSpent(),
     incidents: store.incidents(),
+    platformNames: platformNames(),
     mode,
     lastPoll: readLastPoll(store),
     failedRuns24h: failuresSince(jobs, Date.now() - DAY_MS),
@@ -105,7 +135,15 @@ app.get("/api/incident/:id", async (req, res) => {
       /* not yet written */
     }
   }
-  res.json({ rec, stages: stagesFor(rec, events), eventCount: events.length, evidence });
+  res.json({
+    rec,
+    stages: stagesFor(rec, events),
+    eventCount: events.length,
+    evidence,
+    // The incident record keys by store key; the header must show a name the
+    // operator can find in Studio.
+    platformName: platformNames()[rec.scraper] ?? null,
+  });
 });
 
 app.get("/api/incident/:id/diff", async (req, res) => {
@@ -134,7 +172,7 @@ if (existsSync(resolve(dist, "index.html"))) {
   };
 
   app.get("/", (_req, res) => {
-    render(res, "Fleet", indexPage(store.incidents(), store.creditsSpent(), allJobs().slice(0, 20)));
+    render(res, "Fleet", indexPage(store.incidents(), store.creditsSpent(), allJobs().slice(0, 20), platformNames()));
   });
 
   app.get("/incident/:id", async (req, res) => {
@@ -151,7 +189,7 @@ if (existsSync(resolve(dist, "index.html"))) {
         /* evidence not yet written */
       }
     }
-    render(res, `incident ${rec.id}`, tracePage(rec, stages, events.length));
+    render(res, `incident ${rec.id}`, tracePage(rec, stages, events.length, platformNames()[rec.scraper]));
   });
 
   app.get("/incident/:id/diff", async (req, res) => {

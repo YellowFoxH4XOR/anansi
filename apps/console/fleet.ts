@@ -48,8 +48,10 @@ export type FleetEntry = {
    *  a golden sparkline. */
   recent: RunTick[];
   failed24h: number;
-  /** Bright Data's own cadence, learned from observed start times rather than
-   *  configured — a cadence in ANANSI's config is the coupling ADR-004 removed. */
+  /** Bright Data's own cadence. Taken from the schedule the platform reports
+   *  when it reports one, and only inferred from observed start times otherwise
+   *  — inference is a guess, and it is least reliable for the collector whose
+   *  runs have stopped, which is the one staleness exists to catch. */
   expectedEveryMs?: number;
   /** The collector is overdue against that learned cadence. This is the one
    *  failure a monitor can see and a scheduler could not: a run that never
@@ -63,8 +65,11 @@ export type FleetEntry = {
 export type CursorLike = {
   last_polled_ms?: number;
   last_job_finish_ms?: number;
-  /** Observed job start times, newest last. Feeds inferSchedule(). */
+  /** Observed job start times, newest last. Feeds inferSchedule() — the fallback
+   *  for a collector the platform reports no schedule for. */
   start_times_ms?: number[];
+  /** The cadence collectors_list reports, in ms. Authoritative when present. */
+  platform_schedule_ms?: number;
   platform_name?: string;
   platform_active?: boolean;
 };
@@ -103,7 +108,13 @@ export function buildFleet(input: FleetInput, nowMs = Date.now()): FleetEntry[] 
     const cursor = input.cursors[name] ?? {};
     const mine = input.jobs.filter((j) => j.collector === name);
     const finished = mine.flatMap((j) => (j.finished != null ? [j.finished] : []));
-    const schedule = inferSchedule(cursor.start_times_ms ?? []);
+    // The platform's own answer beats our reconstruction of it. inferSchedule
+    // stays for collectors that report no schedule — an on-demand scraper still
+    // has a rhythm worth noticing — but it is no longer the first source.
+    const observed = inferSchedule(cursor.start_times_ms ?? []);
+    const schedule = cursor.platform_schedule_ms
+      ? { medianGapMs: cursor.platform_schedule_ms, samples: observed?.samples ?? 0 }
+      : observed;
     return {
       name,
       ...(cursor.platform_name ? { platformName: cursor.platform_name } : {}),

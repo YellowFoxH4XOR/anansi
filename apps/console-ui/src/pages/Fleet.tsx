@@ -57,10 +57,11 @@ function humanGap(ms: number | undefined): string {
 
 function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: IncidentRecord }) {
   const { name, platformName, paused, state, collectorId, contract, recent, lastRunAt, failed24h, stale, expectedEveryMs } = entry;
-  // Show what Bright Data calls it. The store key is either a name a contract
-  // invented or a raw collector id, and neither appears anywhere in Studio — so
-  // a board full of those is a board an operator cannot match to their account.
-  const title = platformName ?? name;
+  // Every identifier on this card must exist on Bright Data. The store key is a
+  // name a contract invented — it appears nowhere in Studio, so an operator
+  // cannot match it to their account and has no way to tell it is ours. The
+  // platform's name first, then the collector id, which is at least real.
+  const title = platformName ?? collectorId ?? name;
   const [runs, setRuns] = useState<RunPoint[]>([]);
   useEffect(() => {
     fetchRuns(name).then(setRuns).catch(() => {});
@@ -78,7 +79,7 @@ function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: 
       <div className="flex items-center justify-between gap-3">
         <span
           className="min-w-0 truncate font-bold"
-          title={platformName ? `"${platformName}" on Bright Data${collectorId ? ` · ${collectorId}` : ""}` : name}
+          title={platformName ? `"${platformName}" on Bright Data${collectorId ? ` · ${collectorId}` : ""}` : (collectorId ?? name)}
         >
           {title}
         </span>
@@ -91,12 +92,14 @@ function FleetCard({ entry, openIncident }: { entry: FleetEntry; openIncident?: 
           <StatePill state={state} />
         </div>
       </div>
-      {(collectorId || platformName !== name) && (
+      {collectorId && (
+        // The collector id and nothing else. The contract's name used to be
+        // rendered here as provenance, which put a string ANANSI made up on a
+        // board whose entire claim is that it shows the operator's own account.
+        // That a contract is pinned is already said by the depth chip, without
+        // naming anything the platform has never heard of.
         <span className="num truncate text-[10.5px]" style={{ color: "var(--muted)" }} title={collectorId}>
-          {collectorId ?? "—"}
-          {/* The contract's own name, only when it differs from the platform's.
-              It is ours, so it is shown as provenance rather than as identity. */}
-          {platformName && platformName !== name && ` · pinned by contract "${name}"`}
+          {collectorId}
         </span>
       )}
       {series ? (
@@ -160,7 +163,7 @@ export default function Fleet() {
   if (!state) {
     return <Skeleton lines={3} label="connecting to the store" />;
   }
-  const { fleet, incidents, healAttempts } = state;
+  const { fleet, incidents, healAttempts, platformNames } = state;
   const promoted = incidents.filter((i) => i.resolution === "promoted").length;
   const quarantined = incidents.filter((i) => i.resolution === "quarantined").length;
   const open = incidents.filter((i) => i.resolution == null).length;
@@ -250,7 +253,8 @@ export default function Fleet() {
                   </Link>
                 </td>
                 <td className="border-b px-4 py-2" style={{ borderColor: "var(--line)" }}>
-                  {r.scraper}
+                  {/* The incident keys by store key; show the platform's name. */}
+                  {platformNames?.[r.scraper] ?? r.scraper}
                 </td>
                 <td className="border-b px-4 py-2" style={{ borderColor: "var(--line)" }}>
                   <span className="flex flex-wrap gap-1">

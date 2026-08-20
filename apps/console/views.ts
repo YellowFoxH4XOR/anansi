@@ -137,7 +137,14 @@ ${rows || `<tr><td colspan="7" style="color:var(--muted)">No runs observed yet �
 </div>`;
 }
 
-export function indexPage(incidents: IncidentRecord[], healAttempts: number, jobs: JobRow[] = []): string {
+export function indexPage(
+  incidents: IncidentRecord[],
+  healAttempts: number,
+  jobs: JobRow[] = [],
+  /** store key → the platform's name. An incident keys by store key, which is a
+   *  contract's invented `scraper:` and appears nowhere in Studio. */
+  names: Record<string, string> = {},
+): string {
   const rows = incidents
     .slice()
     .reverse()
@@ -146,7 +153,7 @@ export function indexPage(incidents: IncidentRecord[], healAttempts: number, job
       const color = res === "promoted" ? "var(--good)" : res === "open" ? "var(--accent)" : "var(--bad)";
       return `<tr>
   <td><a href="/incident/${r.id}">${r.id}</a></td>
-  <td>${esc(r.scraper)}</td>
+  <td>${esc(names[r.scraper] ?? r.scraper)}</td>
   <td>${r.signal.map((s) => s.signal).filter((v, i, a) => a.indexOf(v) === i).join(", ")}</td>
   <td>${r.route}</td>
   <td><span class="pill" style="border:1px solid ${color};color:${color}">${res}</span></td>
@@ -191,7 +198,7 @@ function gateList(gates: GateResult[]): string {
 
 export type Page = { body: string; script?: string };
 
-export function tracePage(rec: IncidentRecord, stages: StageView[], eventCount: number): Page {
+export function tracePage(rec: IncidentRecord, stages: StageView[], eventCount: number, platformName?: string): Page {
   const nodes = stages
     .map(
       (s, i) => `<div class="stage">
@@ -218,7 +225,7 @@ setInterval(async () => {
 </script>`;
 
   return {
-    body: `<h1>incident <span class="id">${rec.id}</span> · ${esc(rec.scraper)} <a style="float:right;font-size:.8rem;color:var(--accent)" href="/incident/${rec.id}/diff">split diff →</a></h1>
+    body: `<h1>incident <span class="id">${rec.id}</span> · ${esc(platformName ?? rec.scraper)} <a style="float:right;font-size:.8rem;color:var(--accent)" href="/incident/${rec.id}/diff">split diff →</a></h1>
 <div class="kpis">
   <span>route <b>${rec.route}</b></span>
   <span>resolution <b>${rec.resolution ?? "open"}</b></span>

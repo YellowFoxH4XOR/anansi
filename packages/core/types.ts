@@ -98,6 +98,12 @@ export type Verdict = {
 export type HealAttempt = {
   prompt: string;
   diff_summary: string;
+  /** Where Scraper Studio shows the proposed template. The platform's own
+   *  diff_summary says "review at view_url" and hands the address over next to
+   *  it; dropping it left the console instructing an operator to review a fix at
+   *  the name of a variable. It is also the only place the actual code change
+   *  can be seen — there is no API that returns a scraper's source. */
+  view_url?: string;
   verdict?: Verdict;
   ts: number;
 };
