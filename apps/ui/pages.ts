@@ -9,14 +9,12 @@
 //   - h1.title / .availability with exact "in stock" | "out of stock" text
 //   - M2: aside.crosssell with its own <span class="price">$12.99</span>,
 //     rendered BEFORE the real price in the DOM
-//   - M3: #consent-overlay, #accept-cookies, and the literal
-//     <div class="page-content" style="display:none"> plus the inline script
 //   - S2: div.pricing > div.current > span[data-testid="price-value"]
 //   - control links are exactly /__control?mutate=<id>
 // Everything else on these pages is decoration: baseline vs mutated renders
 // must differ ONLY by the mutation itself (the diff pipeline diffs them).
 
-export type Mutation = "none" | "rename" | "inject" | "cookiewall" | "block403" | "renest";
+export type Mutation = "none" | "rename" | "inject" | "renest";
 
 export const MUTATIONS: {
   id: Mutation;
@@ -49,22 +47,6 @@ export const MUTATIONS: {
     series: "M",
     blurb: "A cross-sell strip with its own .price ($12.99) renders above the real price. No error — just wrong data.",
     expect: "signals 1–3 all pass; golden band trips (12.99 outside 49.99 ±15%) → heal narrows the selector scope.",
-  },
-  {
-    id: "cookiewall",
-    tag: "M3",
-    name: "Cookie wall",
-    series: "M",
-    blurb: "Full-screen consent modal; content display:none until dismissed.",
-    expect: "wait_element_timeout → heal adds interaction code (close_popup), not a selector swap.",
-  },
-  {
-    id: "block403",
-    tag: "S1",
-    name: "403 bot challenge",
-    series: "S",
-    blurb: "Every page returns 403 + challenge — must route to infra lane, never heal.",
-    expect: "triage reads blocked → INFRA lane. No heal attempt, no LLM spend (ADR-003).",
   },
   {
     id: "renest",
@@ -146,7 +128,7 @@ function layout(title: string, body: string): string {
 <style>
   :root {
     /* --muted 4.7:1 and --faint nudged toward legibility on --bg (AA-checked
-       for the 16px reading copy: hero paragraph, .challenge-sub). */
+       for the 16px reading copy: hero paragraph, .description). */
     --bg:#f7f3eb; --card:#fffdf8; --ink:#221e18; --soft:#4c463c; --muted:#746c5b;
     --faint:#9a9078; --accent:#b64a2e; --accent-deep:#93391f; --line:#e8e0d0;
     --wash:#f1eadb; --green:#3e6b4f; --green-bg:#e9f0e6; --gold-bg:#fbf3df; --gold-line:#ecdfb6;
@@ -234,24 +216,8 @@ function layout(title: string, body: string): string {
   .crosssell .title-sm { font-family:var(--serif); font-size:1rem; }
   .crosssell .price { font-size:1.02rem; font-weight:650; color:var(--accent-deep); }
 
-  /* ── Cookie wall (M3) ── */
-  #consent-overlay { position:fixed; inset:0; z-index:99; display:flex; align-items:center; justify-content:center; background:rgba(30,24,15,.55); backdrop-filter:blur(5px); padding:1.2rem; }
-  .consent-card { background:var(--card); border:1px solid var(--line); border-radius:20px; max-width:430px; width:100%; padding:2.5rem 2.3rem 2rem; text-align:center; box-shadow:0 32px 90px rgba(20,15,8,.35); }
-  .consent-glyph { font-size:2.6rem; line-height:1; margin-bottom:.9rem; }
-  .consent-card h2 { font-family:var(--serif); font-weight:560; font-size:1.5rem; margin-bottom:.6rem; }
-  .consent-card p { color:var(--muted); font-size:.95rem; margin-bottom:1.4rem; }
-  #accept-cookies { font-family:var(--sans); width:100%; font-size:.84rem; font-weight:600; letter-spacing:.14em; text-transform:uppercase; background:var(--accent); color:#fff; border:0; border-radius:10px; padding:.95rem 2rem; cursor:pointer; transition:background .15s ease; }
-  #accept-cookies:hover { background:var(--accent-deep); }
-  .consent-card .consent-fine { font-size:.72rem; color:var(--faint); margin:1rem 0 0; }
 
-  /* ── 403 challenge (S1) ── */
-  .challenge-card { max-width:520px; margin:4.5rem auto; text-align:center; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:3.2rem 2.4rem 2.6rem; }
-  .challenge-spin { width:42px; height:42px; margin:0 auto 1.6rem; border-radius:50%; border:3px solid var(--line); border-top-color:var(--accent); animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
-  .challenge-card h1 { font-family:var(--serif); font-weight:560; font-size:1.55rem; line-height:1.25; margin-bottom:.7rem; }
-  .challenge-sub { color:var(--muted); font-size:.95rem; }
-  .challenge-meta { margin-top:1.7rem; padding-top:1.2rem; border-top:1px solid var(--line); font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
-  .challenge-lab { margin-top:1rem; font-size:.8rem; color:var(--muted); }
 
   footer.site { border-top:1px solid var(--line); margin-top:3rem; padding:2.6rem 2rem 3rem; text-align:center; color:var(--muted); font-size:.85rem; }
   footer.site .foot-brand { font-family:var(--serif); font-weight:600; font-size:1.2rem; color:var(--ink); margin-bottom:.45rem; }
@@ -317,27 +283,6 @@ function crosssell(mutation: Mutation): string {
 </aside>`;
 }
 
-function cookieWall(body: string): string {
-  return `<div id="consent-overlay">
-  <div class="consent-card" role="dialog" aria-modal="true">
-    <div class="consent-glyph">🍪</div>
-    <h2>Before you browse</h2>
-    <p>Loomcart uses cookies to remember your basket, your preferences, and your deepest browsing regrets. Accept to continue to the shop.</p>
-    <button id="accept-cookies" type="button">Accept all cookies</button>
-    <p class="consent-fine">Strictly-necessary crumbs only. This is a demonstration storefront.</p>
-  </div>
-</div>
-<div class="page-content" style="display:none">
-${body}
-</div>
-<script>
-document.getElementById('accept-cookies').addEventListener('click', function () {
-  document.getElementById('consent-overlay').remove();
-  document.querySelector('.page-content').style.display = '';
-});
-</script>`;
-}
-
 // ─── Pages ───────────────────────────────────────────────────────────────────
 
 export function productPage(p: Product, mutation: Mutation): string {
@@ -366,7 +311,7 @@ export function productPage(p: Product, mutation: Mutation): string {
     </ul>
   </div>
 </div>`;
-  const body = mutation === "cookiewall" ? cookieWall(inner) : inner;
+  const body = inner;
   return layout(p.title, body);
 }
 
@@ -402,24 +347,11 @@ export function listingPage(mutation: Mutation): string {
 <div class="grid">
 ${cards}
 </div>`;
-  const body = mutation === "cookiewall" ? cookieWall(inner) : inner;
+  const body = inner;
   return layout("Shop", body);
 }
 
-export function challengePage(): string {
-  return layout(
-    "Access denied",
-    `<div class="challenge-card">
-  <div class="challenge-spin" aria-hidden="true"></div>
-  <h1>Checking your browser before accessing loomcart</h1>
-  <p class="challenge-sub">Automated traffic detected from your network. This check is automatic — you will be redirected shortly.</p>
-  <div class="challenge-meta">Ray ID LC-S1-4403 · Performance &amp; security by LoomShield</div>
-  <p class="challenge-lab">Reference: S1 bot-challenge mutation — the correct ANANSI response is to route to the infra lane and <em>not</em> heal.</p>
-</div>`,
-  );
-}
-
-// ─── Control panel — dark instrument styling, deliberately unlike the shop ──
+// ─── Control panel — light instrument styling, sharing the shop's palette ──
 
 function controlRow(m: (typeof MUTATIONS)[number], current: Mutation): string {
   const active = m.id === current;
@@ -457,31 +389,36 @@ export function controlPage(current: Mutation): string {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
+  /* Light instrument panel, sharing the storefront's paper palette so the two
+     read as one product. Every ink/ground pair here clears 4.5:1 on its own
+     background — this gets filmed and projected, where a low-contrast grey is
+     simply unreadable. --accent is the storefront's terracotta rather than the
+     amber that only worked against near-black. */
   :root {
-    --bg:#0b0d10; --panel:#11151a; --panel2:#171c23; --line:#242c36; --line2:#313b47;
-    --txt:#c9d4e0; --bright:#eef4fb; --dim:#77828f; --faint:#4d5661;
-    --accent:#ffb154; --accent-soft:rgba(255,177,84,.08);
-    --green:#4ade80; --green-soft:rgba(74,222,128,.08);
+    --bg:#f7f3eb; --panel:#fffdf8; --panel2:#f1eadb; --line:#e4dbc9; --line2:#cfc3aa;
+    --txt:#3b352b; --bright:#221e18; --dim:#6b6355; --faint:#8d8471;
+    --accent:#b64a2e; --accent-soft:rgba(182,74,46,.07);
+    --green:#3e6b4f; --green-soft:rgba(62,107,79,.08);
     --mono:'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing:border-box; margin:0; }
   body {
     font-family:var(--mono); color:var(--txt); font-size:14px; line-height:1.55; min-height:100vh;
     background:
-      radial-gradient(1100px 380px at 50% -8%, rgba(255,177,84,.06), transparent),
-      linear-gradient(rgba(255,255,255,.024) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,.024) 1px, transparent 1px),
+      radial-gradient(1100px 380px at 50% -8%, rgba(182,74,46,.05), transparent),
+      linear-gradient(rgba(34,30,24,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34,30,24,.035) 1px, transparent 1px),
       var(--bg);
     background-size:auto, 28px 28px, 28px 28px, auto;
   }
-  header.bar { display:flex; align-items:center; flex-wrap:wrap; gap:.8rem 1.6rem; padding:1rem 1.8rem; border-bottom:1px solid var(--line); background:rgba(11,13,16,.92); backdrop-filter:blur(6px); position:sticky; top:0; z-index:5; }
+  header.bar { display:flex; align-items:center; flex-wrap:wrap; gap:.8rem 1.6rem; padding:1rem 1.8rem; border-bottom:1px solid var(--line); background:rgba(247,243,235,.92); backdrop-filter:blur(6px); position:sticky; top:0; z-index:5; }
   .brand { font-weight:700; letter-spacing:.22em; color:var(--bright); font-size:.92rem; }
   .brand .mark { color:var(--accent); }
   .brand .dim { color:var(--dim); font-weight:500; }
   .readout { display:flex; align-items:center; gap:.7rem; font-size:.7rem; letter-spacing:.2em; color:var(--dim); }
   .state-chip { font-size:.7rem; font-weight:700; letter-spacing:.18em; border:1px solid; border-radius:5px; padding:.32rem .75rem; }
-  .state-chip.ok { color:var(--green); border-color:rgba(74,222,128,.5); background:var(--green-soft); }
-  .state-chip.hot { color:var(--accent); border-color:rgba(255,177,84,.55); background:var(--accent-soft); animation:pulse 1.8s ease-in-out infinite; }
+  .state-chip.ok { color:var(--green); border-color:rgba(62,107,79,.45); background:var(--green-soft); }
+  .state-chip.hot { color:var(--accent); border-color:rgba(182,74,46,.5); background:var(--accent-soft); animation:pulse 1.8s ease-in-out infinite; }
   header.bar nav { margin-left:auto; display:flex; gap:1.3rem; }
   header.bar nav a { color:var(--dim); text-decoration:none; font-size:.76rem; letter-spacing:.08em; transition:color .15s ease; }
   header.bar nav a:hover { color:var(--accent); }
@@ -499,21 +436,21 @@ export function controlPage(current: Mutation): string {
 
   .row { display:grid; grid-template-columns:auto 1fr auto; gap:1.1rem; align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:1rem 1.2rem; margin-bottom:.7rem; transition:border-color .15s ease, background .15s ease; }
   .row:hover { border-color:var(--line2); }
-  .row.active { border-color:rgba(255,177,84,.6); background:linear-gradient(180deg, var(--accent-soft), transparent 70%), var(--panel); box-shadow:0 0 0 1px rgba(255,177,84,.22), 0 0 30px rgba(255,177,84,.07); }
-  .row.reset.active { border-color:rgba(74,222,128,.55); background:linear-gradient(180deg, var(--green-soft), transparent 70%), var(--panel); box-shadow:0 0 0 1px rgba(74,222,128,.22), 0 0 30px rgba(74,222,128,.06); }
+  .row.active { border-color:rgba(182,74,46,.55); background:linear-gradient(180deg, var(--accent-soft), transparent 70%), var(--panel); box-shadow:0 0 0 1px rgba(182,74,46,.18), 0 0 30px rgba(182,74,46,.06); }
+  .row.reset.active { border-color:rgba(62,107,79,.5); background:linear-gradient(180deg, var(--green-soft), transparent 70%), var(--panel); box-shadow:0 0 0 1px rgba(62,107,79,.18), 0 0 30px rgba(62,107,79,.06); }
   .mid { font-size:.78rem; font-weight:700; color:var(--dim); background:var(--panel2); border:1px solid var(--line2); border-radius:6px; padding:.5rem .5rem; min-width:2.7rem; text-align:center; }
-  .row.active .mid { color:var(--accent); border-color:rgba(255,177,84,.5); }
-  .row.reset .mid { color:var(--green); border-color:rgba(74,222,128,.35); }
+  .row.active .mid { color:var(--accent); border-color:rgba(182,74,46,.45); }
+  .row.reset .mid { color:var(--green); border-color:rgba(62,107,79,.3); }
   .mname { color:var(--bright); font-weight:600; font-size:.9rem; display:flex; align-items:center; gap:.7rem; flex-wrap:wrap; }
-  .chip { font-size:.6rem; font-weight:700; letter-spacing:.2em; color:#140f08; background:var(--accent); border-radius:4px; padding:.2rem .55rem; animation:pulse 1.6s ease-in-out infinite; }
-  .row.reset .chip { background:var(--green); color:#07130b; }
+  .chip { font-size:.6rem; font-weight:700; letter-spacing:.2em; color:#fffdf8; background:var(--accent); border-radius:4px; padding:.2rem .55rem; animation:pulse 1.6s ease-in-out infinite; }
+  .row.reset .chip { background:var(--green); color:#fffdf8; }
   .mblurb { color:var(--dim); font-size:.75rem; margin-top:.2rem; }
   .mexpect { color:var(--dim); font-size:.7rem; margin-top:.35rem; }
   .mexpect::before { content:"↳ expected — "; }
-  .fire { font-family:inherit; font-size:.7rem; font-weight:700; letter-spacing:.2em; text-transform:uppercase; color:var(--accent); background:rgba(255,177,84,.04); border:1px solid rgba(255,177,84,.55); border-radius:7px; padding:.65rem 1.2rem; text-decoration:none; white-space:nowrap; transition:all .15s ease; }
-  a.fire:hover { background:var(--accent); color:#140f08; box-shadow:0 0 24px rgba(255,177,84,.35); transform:translateY(-1px); }
-  .fire.resetbtn { color:var(--green); background:rgba(74,222,128,.04); border-color:rgba(74,222,128,.55); }
-  a.fire.resetbtn:hover { background:var(--green); color:#07130b; box-shadow:0 0 24px rgba(74,222,128,.3); }
+  .fire { font-family:inherit; font-size:.7rem; font-weight:700; letter-spacing:.2em; text-transform:uppercase; color:var(--accent); background:rgba(182,74,46,.05); border:1px solid rgba(182,74,46,.5); border-radius:7px; padding:.65rem 1.2rem; text-decoration:none; white-space:nowrap; transition:all .15s ease; }
+  a.fire:hover { background:var(--accent); color:#fffdf8; box-shadow:0 0 24px rgba(182,74,46,.28); transform:translateY(-1px); }
+  .fire.resetbtn { color:var(--green); background:rgba(62,107,79,.05); border-color:rgba(62,107,79,.5); }
+  a.fire.resetbtn:hover { background:var(--green); color:#fffdf8; box-shadow:0 0 24px rgba(62,107,79,.25); }
   /* The active mutation's control is a state readout (a <span>), not a link. */
   .fire.live { color:var(--dim); background:transparent; border-color:var(--line2); }
 
@@ -540,7 +477,7 @@ export function controlPage(current: Mutation): string {
 ${reset}
   <div class="ghead"><span class="gname">M-SERIES</span><span class="gdesc">heal these — parser breakage ANANSI must repair autonomously</span></div>
 ${mRows}
-  <div class="ghead"><span class="gname">S-SERIES</span><span class="gdesc">must NOT heal — S1 routes to the infra lane; S2 stress-tests structural diffing</span></div>
+  <div class="ghead"><span class="gname">S-SERIES</span><span class="gdesc">must NOT heal — stress-tests structural diffing rather than parser breakage</span></div>
 ${sRows}
 </main>
 <footer>deep-link any scenario: <code>/__control?mutate=&lt;id&gt;</code> · state lives in KV · <code>Cache-Control: no-store</code> everywhere</footer>

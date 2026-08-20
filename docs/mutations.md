@@ -16,7 +16,7 @@ video and survive a judge poking it days later.
   land on different instances and mutations intermittently vanish (a flaky, undebuggable
   demo failure). Read the KV on every request; send `Cache-Control: no-store` on every Lab
   page including `/__control`. Verify on D1 with two rapid curls after a mutation flip.
-  State: `{mutation: "none" | "rename" | "inject" | "cookiewall" | ...}`.
+  State: `{mutation: "none" | "rename" | "inject" | "renest"}`.
 - `/__control` — the control panel: one button per mutation + RESET. Also accepts
   `?mutate=rename` links so the README can deep-link each scenario.
 - Every page renders according to current mutation state. Reset returns to baseline instantly.
@@ -38,15 +38,17 @@ video and survive a judge poking it days later.
   heal narrows the selector → verify → promoted.
 - This is the beat every null-checking lookalike fails. Video slot 0:40.
 
-### M3 · Cookie wall — proves healing isn't find-and-replace
-- After: full-screen consent modal; content behind `display:none` until dismissed.
-- Expect: hard fail (`wait_element_timeout`) or contract nulls → diagnosis describes the
-  modal → heal adds **interaction code** (`close_popup()`), not a selector swap → verify.
+### Removed: M3 · Cookie wall, S1 · 403 bot challenge
+Both were cut from the Lab. Neither exercised the loop ANANSI is actually for — a DOM
+that moved — and each cost a page of markup and CSS to keep true.
+
+Removing S1 does **not** remove the infra lane. Triage still routes `blocked` /
+`captcha_timeout` / `proxy*` away from heal (ADR-003), and the archive still recognises a
+403 challenge and withholds the capture; those live in the routing table and are tested
+against a fixture in `test/archive.test.ts` rather than against a Lab page.
 
 ## Stretch (Tier 2) / cut-first (Tier 3)
 
-- **S1 · 403 bot challenge (Tier 2):** route returns 403 + challenge page. Expect: triage
-  routes `blocked` to the infra lane and **refuses to heal** (ADR-003). One route, big proof.
 - **S2 · Re-nest (Tier 2):** price moves two levels deeper into `span[data-testid]`. Cheap
   once M1 works; padding for the fleet view.
 - **S3 · SSR → XHR (Tier 3):** price leaves the HTML, arrives via `/api/price`. The correct

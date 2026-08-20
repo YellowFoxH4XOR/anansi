@@ -49,21 +49,6 @@ describe("Mutation Lab", () => {
     expect(r.status).toBe(200);
   });
 
-  it("M3 hides content behind the consent overlay", async () => {
-    await get("/__control?mutate=cookiewall");
-    const r = await get("/product/echo-speaker");
-    expect(r.body).toContain("consent-overlay");
-    expect(r.body).toContain('class="page-content" style="display:none"');
-  });
-
-  it("S1 returns 403 on every storefront route", async () => {
-    await get("/__control?mutate=block403");
-    expect((await get("/")).status).toBe(403);
-    expect((await get("/product/echo-speaker")).status).toBe(403);
-    // Control stays reachable so a judge can always recover.
-    expect((await get("/__control")).status).toBe(200);
-  });
-
   it("S2 re-nests the price under data-testid", async () => {
     await get("/__control?mutate=renest");
     const r = await get("/product/echo-speaker");

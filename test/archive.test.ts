@@ -12,7 +12,21 @@ import { join } from "node:path";
 import { archivePages, httpPageFetcher, looksLikeChallenge, originRewriter, viaOrigin } from "../apps/agent/archive.js";
 import { Store } from "../packages/adapters/store/index.js";
 import { routeErrorCode } from "../packages/core/sense/triage.js";
-import { challengePage, productPage, PRODUCTS } from "../apps/ui/pages.js";
+import { productPage, PRODUCTS } from "../apps/ui/pages.js";
+
+/** A bot-check interstitial, as an anti-bot vendor serves one.
+ *
+ *  A fixture rather than a Lab page: the archive must recognise a challenge from
+ *  ANY origin, and the Lab no longer serves one of its own. What matters is the
+ *  shape — a short body, no product markup, and a "checking your browser" tell. */
+function challengePage(): string {
+  return `<!doctype html><html lang="en"><head><title>Access denied</title></head><body>
+<div class="challenge-card">
+  <h1>Checking your browser before accessing loomcart</h1>
+  <p>Automated traffic detected from your network. This check is automatic.</p>
+  <div>Ray ID LC-4403 &middot; Performance &amp; security by LoomShield</div>
+</div></body></html>`;
+}
 
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const URL_ECHO = "https://lab.test/product/echo-speaker";

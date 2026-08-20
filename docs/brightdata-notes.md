@@ -120,8 +120,7 @@ which is exactly why ANANSI keeps its own free HTML archive ·
 a throwing validator makes Studio discard the whole record including the `tag_html` capture,
 so M1 arrives as an empty row and the heal loop has nothing to diff (observed as incident
 9708ba89); ANANSI's contract engine is the validity authority and must see the null ·
-`detect_block()` (triage semantics) · `close_popup()` (M3 heal target) ·
-`load_more()` (S4) · error taxonomy consumed end-to-end · Versions for rollback
+`detect_block()` (triage semantics) · `load_more()` (S4) · error taxonomy consumed end-to-end · Versions for rollback
 (dashboard-only — no CLI rollback; ANANSI flags, a human clicks).
 
 README surface table rule: render with a status column — "exercised in repo (file:line)" vs

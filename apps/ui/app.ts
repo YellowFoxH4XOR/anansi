@@ -8,7 +8,6 @@ import type { Kv } from "./kv.js";
 import {
   MUTATIONS,
   PRODUCTS,
-  challengePage,
   controlPage,
   listingPage,
   productPage,
@@ -49,14 +48,11 @@ export function createLabApp(kv: Kv): Express {
   });
 
   app.get("/", async (_req, res) => {
-    const m = await state();
-    if (m === "block403") return res.status(403).send(challengePage());
-    res.send(listingPage(m));
+    res.send(listingPage(await state()));
   });
 
   app.get("/product/:sku", async (req, res) => {
     const m = await state();
-    if (m === "block403") return res.status(403).send(challengePage());
     const p = PRODUCTS.find((x) => x.sku === req.params.sku);
     if (!p) return res.status(404).send("Not found");
     res.send(productPage(p, m));
