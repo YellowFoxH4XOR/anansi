@@ -31,6 +31,20 @@ Stop the agent or snapshot the volume atomically before copying it. Restoring
 only `state.json` is not sufficient: diagnosis evidence and the handled-job
 ledger live in adjacent files.
 
+## Upgrade an existing data volume
+
+The production images run as the unprivileged `node` user (UID/GID 1000). A
+volume created by an older root-running image may still be owned by root, which
+prevents the upgraded agent from writing its ledger. Back up the volume, stop
+the agent, and migrate ownership once before the first upgraded start:
+
+```bash
+docker compose run --rm --user root agent chown -R node:node /data
+```
+
+On a managed platform, run the equivalent one-off command against the agent's
+mounted volume. Do not make the volume world-writable as a workaround.
+
 ## Recover a quarantined collector
 
 Quarantine is sticky. Fix the underlying scraper or access problem first, then

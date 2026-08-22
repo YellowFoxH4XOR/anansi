@@ -1,7 +1,7 @@
 # Bright Data platform notes — verified facts
 
-Everything here was checked against primary sources (docs.brightdata.com, github.com/brightdata/cli)
-during planning. The **Learned live** section below outranks the docs where they disagree: those
+Everything here was checked against primary sources (docs.brightdata.com, github.com/brightdata/cli).
+The **Learned live** section below outranks the docs where they disagree: those
 items were observed against a real account, and in two cases the published documentation is
 wrong.
 
@@ -48,7 +48,7 @@ collector comes to exist and how a human can check one by hand — the agent cal
 ```bash
 npm install -g @brightdata/cli        # or curl -fsSL https://cli.brightdata.com/install.sh | sh
 brightdata login                      # creates cli_unlocker / cli_browser zones
-brightdata budget                     # true starting balance — check before the gun
+brightdata budget balance --json      # current balance
 
 brightdata scraper create <url> "<description>" --name anansi-lab -o create.json   # operator
 brightdata scraper run <collector_id> <url> --sync                                 # operator only
@@ -73,24 +73,18 @@ brightdata scraper approve <collector_id> --url <canary>      # or --reject
 | Sync run cap | 25–50 s server-side | operator-only |
 | Result retention | 7 d realtime / 16 d batch | our store is the system of record, never theirs |
 | **Output schema is a second layer** | renames fields, retypes them (`price` type + `raw` format → `{value,currency,symbol}`), and DROPS undeclared fields. Applied only on **Save to Production** | preview output ≠ production output; verify against a real job's dataset rows, never the IDE preview alone |
-| Versions menu | dashboard rollback to earlier scraper version | manual rollback demo is legitimate |
+| Versions menu | dashboard rollback to earlier scraper version | manual recovery path |
 
-## Credit budget (solo)
+## Cost behavior
 
-**RESOLVED (site verified): the promo code IS the per-participant $50** — "Not a prize and
-not split between teams: sign up with Bright Data and the $50 is yours to build with," via
-code `wemakedevs` in billing. There is no second credit; 71k was a double-count. Firm budget:
-free 5,000 + $50 (≈33.3k) ≈ **38k page loads** (billed only for successful requests).
-
-**ANANSI itself spends none of it.** Polling, dataset reads and the HTML archive are free — the
+Polling, dataset reads and the HTML archive do not initiate page loads. The
 archive is a plain GET straight to the target site, and the read API is not billed per page load.
 The page loads on the account are the customer's own scheduled runs, on their cadence, which
 would happen with or without ANANSI. The only spend ANANSI can *initiate* is a heal, which is why
 `credits_spent` now counts heal attempts and the console labels it that way.
-`brightdata budget balance --json` is still the check. Credit-shortage escalation:
-contact@wemakedevs.org.
+Use `brightdata budget balance --json` to inspect the current balance.
 
-## Error-code routing table (triage — decided now, encoded in packages/core/sense/)
+## Error-code routing table
 
 Codes arrive from three places now: the job summary, per-row `error`/`error_code` fields in the
 dataset, and ANANSI's own archive fetch (403 → `blocked`, 404 → `dead_page`, 5xx → retry). All
@@ -108,23 +102,19 @@ A job that failed with **no** row-level code to explain it is `unexplained`: the
 applies before a heal is spent, because one unexplained failure is far more often a platform
 hiccup than a broken selector.
 
-## IDE functions we deliberately exercise (Web-Slinger surface table)
+## Scraper Studio primitives
 
 `tag_html()` on every page load (snapshot source — **VERIFIED on live runs: parser code reads a
 tag as `parser.<name>` and must RETURN it, and the OUTPUT SCHEMA must declare the field or
 it is dropped silently**; `input.url` is returned explicitly for row attribution). Note that
 most scrapers on an account will *not* do this, and there is no API to check or change that,
 which is exactly why ANANSI keeps its own free HTML archive ·
-`tag_response()` (S3 XHR heal, if it survives cuts) ·
-`next_stage()` (books list→detail) · `collect()` **without** a validate_fn — deliberately:
+`collect()` **without** a validate_fn — deliberately:
 a throwing validator makes Studio discard the whole record including the `tag_html` capture,
 so M1 arrives as an empty row and the heal loop has nothing to diff (observed as incident
 9708ba89); ANANSI's contract engine is the validity authority and must see the null ·
-`detect_block()` (triage semantics) · `load_more()` (S4) · error taxonomy consumed end-to-end · Versions for rollback
+`detect_block()` for triage semantics · error taxonomy consumed end-to-end · Versions for rollback
 (dashboard-only — no CLI rollback; ANANSI flags, a human clicks).
-
-README surface table rule: render with a status column — "exercised in repo (file:line)" vs
-"designed, cut for scope (see CUTS.md)" — so Tier cuts never read as overclaiming.
 
 
 ## The dataset does not always carry the failure (verified live, 2026-08-20)

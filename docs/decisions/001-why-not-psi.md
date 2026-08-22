@@ -1,6 +1,6 @@
 # ADR-001: Tolerance bands + CUSUM instead of PSI for drift detection
 
-**Status:** accepted (planning) · **Date:** 2026-08-15
+**Status:** accepted · **Date:** 2026-08-15
 
 ## Context
 We must detect *silent corruption*: a scraper returning HTTP 200 and well-formed JSON whose
@@ -40,8 +40,8 @@ legitimately reworded product title would trip an alarm.
    below a strict n≥30 line — acknowledged, hence the persistence gate.)
 
 ## Consequences
-- Every alarm is explainable ("$12.99 left the $49.99 ± 15% band"), which serves the
-  hackathon's must-understand-your-own-code rule and makes diagnoses better LLM inputs.
+- Every alarm is explainable ("$12.99 left the $49.99 +/- 15% band"), which
+  improves operator trust and produces better diagnosis inputs.
 - **Known residual window, by design:** an injected value landing *inside* the tolerance band
   (e.g. a $45 "also bought" item against a $49.99 ± 15% golden) evades the band instantly and
   is caught only by two-sided CUSUM persistence over the following runs — a

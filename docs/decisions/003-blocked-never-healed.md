@@ -1,6 +1,6 @@
 # ADR-003: `blocked` is never healed
 
-**Status:** accepted (planning) · **Date:** 2026-08-15
+**Status:** accepted · **Date:** 2026-08-15
 
 ## Context
 Scraper Studio's error taxonomy distinguishes code-level failures (`parse_error`,
@@ -23,9 +23,8 @@ cause (access) persists — spending 15-minute heal cycles and credits to make t
 The sharpest form of "reliability" is knowing which failures a fix *cannot* fix.
 
 ## Consequences
-- The S1 mutation (403 challenge) demonstrates refusal-to-heal as a feature on camera.
+- A controlled 403 scenario verifies refusal-to-heal behavior.
 - Requires trusting the error taxonomy; where ambiguous (e.g., `wait_element_timeout` caused
   by an interstitial), the DOM snapshot disambiguates — the diff shows a consent modal, not a
   removed element, and diagnosis routes accordingly.
-- Sponsor-facing bonus: the triage table demonstrates we consumed their entire error taxonomy,
-  which is Web-Slinger surface coverage no lookalike will have.
+- The triage table keeps the supported platform error taxonomy explicit and testable.

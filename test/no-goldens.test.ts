@@ -11,7 +11,7 @@ import { observedContract } from "../apps/agent/monitor.js";
 import { contractFieldsFromSchema } from "../packages/adapters/brightdata/types.js";
 import { verifyV1 } from "../packages/core/verify/v1.js";
 
-// Verbatim from c_msyy76jk20f9e9mrh5's collectors_list response.
+// Representative of a collectors_list response.
 const schema = {
   type: "object",
   fields: {
