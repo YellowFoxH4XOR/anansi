@@ -1,6 +1,6 @@
 // Console server: JSON API over the store + the React SPA (console-ui/dist)
 // when it's been built, falling back to the original server-rendered views
-// when it hasn't — so the demo path never depends on a frontend build.
+// when it has not been built.
 //
 // Strictly a reader. The console holds no BRIGHTDATA_API_KEY and imports no
 // platform client: the agent is the only process that talks to Bright Data,
@@ -18,10 +18,18 @@ import { diffPage, fleetStrip, indexPage, layout, tracePage, type Page } from ".
 import { stagesFor } from "./stages.js";
 import { readFleet, readJobs, readLastPoll } from "./read.js";
 import { failuresSince } from "./jobs.js";
+import {
+  basicAuth,
+  consoleCredentialsFromEnv,
+  securityHeaders,
+} from "./security.js";
 
 const store = new Store(process.env.ANANSI_DATA ?? "data");
-await store.init();
 const app = express();
+app.disable("x-powered-by");
+app.use(securityHeaders);
+const credentials = consoleCredentialsFromEnv();
+if (credentials) app.use(basicAuth(credentials));
 
 // ---------------------------------------------------------------- shared bits
 
@@ -205,6 +213,19 @@ if (existsSync(resolve(dist, "index.html"))) {
 }
 
 const port = Number(process.env.PORT ?? 4700);
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`ANANSI console: http://localhost:${port}`);
 });
+
+function shutdown(signal: NodeJS.Signals): void {
+  console.log(`${signal}: draining ANANSI console`);
+  server.close((error) => {
+    if (error) {
+      console.error(error);
+      process.exitCode = 1;
+    }
+  });
+}
+
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);

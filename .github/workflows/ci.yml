@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/console-ui/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix apps/console-ui
+      - run: npm run check
+      - name: Validate production Compose configuration
+        env:
+          BRIGHTDATA_API_KEY: ci-placeholder
+          ANANSI_CONSOLE_PASSWORD: ci-placeholder
+        run: docker compose config --quiet
+      - name: Validate demo Compose configuration
+        env:
+          BRIGHTDATA_API_KEY: ci-placeholder
+          ANANSI_CONSOLE_PASSWORD: ci-placeholder
+        run: docker compose -f docker-compose.yml -f docker-compose.demo.yml config --quiet

@@ -1,10 +1,11 @@
 .git
+.github
 .gitignore
+.conductor
 node_modules
-console-ui/node_modules
-console-ui/dist
-console-ui/tsconfig.tsbuildinfo
-lab/node_modules
+apps/*/node_modules
+apps/console-ui/dist
+apps/console-ui/tsconfig.tsbuildinfo
 data
 coverage
 .env
@@ -13,3 +14,6 @@ docs
 examples
 test
 *.md
+create.json
+heal*.json
+out.json
