@@ -82,8 +82,6 @@ cp .env.example .env
 | `ANANSI_CONTRACTS` | `contracts` | Directory containing optional YAML contracts |
 | `ANANSI_DATA` | `data` | Runtime state, snapshots, job ledger, and audit log |
 | `GEMINI_API_KEY` | none | Optional LLM prompt generation; deterministic fallback otherwise |
-| `ANANSI_CONSOLE_USERNAME` | `anansi` | Console HTTP Basic Auth username in production |
-| `ANANSI_CONSOLE_PASSWORD` | none | Required by the production container |
 
 Contracts are optional overlays keyed by `collector_id`. A collector without a
 contract is still discovered and monitored, but its repair remains at the human
@@ -126,14 +124,15 @@ BRIGHTDATA_API_KEY=... ANANSI_ADAPTER=fake npm run monitor
 ## Container deployment
 
 The default Compose file runs only the production services: the agent and the
-authenticated console.
+open, read-only console.
 
 ```bash
 docker compose up --build -d
 ```
 
-The console is bound to `127.0.0.1:4700` by default. Put it behind an
-authenticated TLS reverse proxy before exposing it beyond the host.
+The console has no built-in authentication and is bound to `127.0.0.1:4700` by
+default. Any client that can reach the console can read it, so change that
+binding only when the network exposure is intentional.
 
 The deliberately breakable Mutation Lab is not part of the production stack.
 Start it only when evaluating the repair loop:
@@ -143,7 +142,7 @@ docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build
 ```
 
 See [the Coolify deployment guide](docs/deploy-coolify.md) and
-[the operations guide](docs/operations.md) for authentication, backups,
+[the operations guide](docs/operations.md) for network exposure, backups,
 quarantine recovery, and safe shutdown procedures.
 
 ## Bright Data integration
@@ -186,8 +185,9 @@ the offline write adapter is
 - Plain HTTP archive captures are lower fidelity than Bright Data's browser
   rendering. JS-heavy, geo-gated, and challenged pages are marked
   low-confidence and are not used to generate confident repairs.
-- The console exposes collected values and incident evidence. Keep
-  authentication enabled and restrict network access.
+- The console exposes collected values and incident evidence without built-in
+  authentication. Keep it on a trusted network or behind access controls you
+  manage outside ANANSI.
 
 ## Development disclosure
 

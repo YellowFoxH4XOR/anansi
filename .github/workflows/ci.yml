@@ -26,10 +26,8 @@ jobs:
       - name: Validate production Compose configuration
         env:
           BRIGHTDATA_API_KEY: ci-placeholder
-          ANANSI_CONSOLE_PASSWORD: ci-placeholder
         run: docker compose config --quiet
       - name: Validate demo Compose configuration
         env:
           BRIGHTDATA_API_KEY: ci-placeholder
-          ANANSI_CONSOLE_PASSWORD: ci-placeholder
         run: docker compose -f docker-compose.yml -f docker-compose.demo.yml config --quiet

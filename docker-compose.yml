@@ -7,8 +7,6 @@ services:
       PORT: "4700"
       ANANSI_DATA: /data
       ANANSI_MODE: ${ANANSI_ADAPTER:-real}
-      ANANSI_CONSOLE_USERNAME: ${ANANSI_CONSOLE_USERNAME:-anansi}
-      ANANSI_CONSOLE_PASSWORD: ${ANANSI_CONSOLE_PASSWORD:?Set ANANSI_CONSOLE_PASSWORD in .env}
     ports:
       - "127.0.0.1:${ANANSI_CONSOLE_PORT:-4700}:4700"
     volumes:
@@ -17,13 +15,7 @@ services:
       - agent
     restart: unless-stopped
     healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - >-
-          const auth='Basic '+Buffer.from(process.env.ANANSI_CONSOLE_USERNAME+':'+process.env.ANANSI_CONSOLE_PASSWORD).toString('base64');
-          fetch('http://127.0.0.1:4700/api/state',{headers:{authorization:auth}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4700/api/state').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3

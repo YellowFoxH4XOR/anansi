@@ -18,18 +18,12 @@ import { diffPage, fleetStrip, indexPage, layout, tracePage, type Page } from ".
 import { stagesFor } from "./stages.js";
 import { readFleet, readJobs, readLastPoll } from "./read.js";
 import { failuresSince } from "./jobs.js";
-import {
-  basicAuth,
-  consoleCredentialsFromEnv,
-  securityHeaders,
-} from "./security.js";
+import { securityHeaders } from "./security.js";
 
 const store = new Store(process.env.ANANSI_DATA ?? "data");
 const app = express();
 app.disable("x-powered-by");
 app.use(securityHeaders);
-const credentials = consoleCredentialsFromEnv();
-if (credentials) app.use(basicAuth(credentials));
 
 // ---------------------------------------------------------------- shared bits
 
