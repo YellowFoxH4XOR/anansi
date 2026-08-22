@@ -1,45 +1,29 @@
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import express from "express";
 import { describe, expect, it } from "vitest";
-import {
-  consoleCredentialsFromEnv,
-  isAuthorized,
-  type ConsoleCredentials,
-} from "../apps/console/security.js";
+import { securityHeaders } from "../apps/console/security.js";
 
-describe("console authentication", () => {
-  it("requires a password in production", () => {
-    expect(() => consoleCredentialsFromEnv({ NODE_ENV: "production" })).toThrow(
-      "ANANSI_CONSOLE_PASSWORD is required",
-    );
-  });
+describe("console response hardening", () => {
+  it("sets passive security headers without requiring credentials", async () => {
+    const app = express();
+    app.use(securityHeaders);
+    app.get("/", (_req, res) => res.status(204).end());
 
-  it("allows unauthenticated local development", () => {
-    expect(consoleCredentialsFromEnv({ NODE_ENV: "development" })).toBeNull();
-  });
+    const server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
 
-  it("uses a safe default username", () => {
-    expect(consoleCredentialsFromEnv({ ANANSI_CONSOLE_PASSWORD: "secret" })).toEqual({
-      username: "anansi",
-      password: "secret",
-    });
-  });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}`);
 
-  it("rejects usernames that cannot be represented by Basic Auth", () => {
-    expect(() =>
-      consoleCredentialsFromEnv({
-        ANANSI_CONSOLE_USERNAME: "bad:name",
-        ANANSI_CONSOLE_PASSWORD: "secret",
-      }),
-    ).toThrow("cannot contain ':'");
-  });
-
-  it("accepts only the exact Basic Auth credentials", () => {
-    const credentials: ConsoleCredentials = { username: "operator", password: "correct horse" };
-    const valid = `Basic ${Buffer.from("operator:correct horse").toString("base64")}`;
-    const invalid = `Basic ${Buffer.from("operator:wrong").toString("base64")}`;
-
-    expect(isAuthorized(valid, credentials)).toBe(true);
-    expect(isAuthorized(invalid, credentials)).toBe(false);
-    expect(isAuthorized("Bearer anything", credentials)).toBe(false);
-    expect(isAuthorized(undefined, credentials)).toBe(false);
+      expect(response.status).toBe(204);
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(response.headers.get("x-frame-options")).toBe("DENY");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

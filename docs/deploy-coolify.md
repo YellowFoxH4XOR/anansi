@@ -5,7 +5,7 @@ The production Compose stack contains two services:
 | Service | Exposure | Purpose |
 |---|---|---|
 | `agent` | private worker | Discovers collectors, evaluates completed jobs, and drives guarded repairs |
-| `console` | authenticated HTTP | Read-only fleet, incident, and diagnosis UI |
+| `console` | open HTTP | Read-only fleet, incident, and diagnosis UI |
 
 Both services mount `anansi-data`. The agent is the only writer; the console
 mounts the same volume read-only.
@@ -13,9 +13,8 @@ mounts the same volume read-only.
 ## Prerequisites
 
 - A Bright Data API key with access to the collectors being monitored
-- A strong console password
 - Persistent volume backups
-- TLS and network access controls for the console domain
+- An intentional network-exposure policy for the open console
 
 ## Create the resource
 
@@ -33,8 +32,6 @@ Set these variables on the Compose resource:
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `BRIGHTDATA_API_KEY` | yes | none | Collector discovery and job-history reads |
-| `ANANSI_CONSOLE_PASSWORD` | yes | none | HTTP Basic Auth password |
-| `ANANSI_CONSOLE_USERNAME` | no | `anansi` | HTTP Basic Auth username |
 | `ANANSI_ADAPTER` | no | `real` | `real` for CLI writes; `fake` for offline writes |
 | `WITH_BRIGHTDATA_CLI` | no | `true` | Installs the CLI in the agent image |
 | `ANANSI_POLL_SECONDS` | no | `10` | Job-history polling interval |
@@ -48,8 +45,8 @@ live in both modes and always require `BRIGHTDATA_API_KEY`.
 1. Set the environment values before the first build.
 2. Deploy the Compose resource.
 3. Confirm the `agent` log reports its contract count and selected adapter.
-4. Open `/api/state` through the console domain and verify Basic Auth is
-   required.
+4. Open `/api/state` through the console domain and verify it responds without
+   credentials.
 5. Confirm the fleet matches the collectors visible in Bright Data.
 6. Configure collection schedules in Scraper Studio. ANANSI does not start
    collections.
@@ -66,16 +63,16 @@ Canary URLs must exactly match the `input.url` values emitted by the production
 dataset. Scraper Studio's output schema must retain every field required by the
 contract, including `input.url` when row attribution is needed.
 
-## Console security
+## Console exposure
 
 The console contains collected values, incident evidence, and DOM snapshots.
-ANANSI enforces Basic Auth when `NODE_ENV=production`, but that is only one
-layer:
+It has no built-in authentication and is open to every client that can reach
+it. The default local Compose binding is loopback-only. In Coolify, configure
+the domain and network policy deliberately:
 
-- terminate TLS at Coolify's proxy;
-- restrict the domain with an allowlist or upstream identity provider where
-  possible;
-- rotate the console password as an operational secret; and
+- keep the console private when possible;
+- use a Coolify or upstream access-control layer if the network is untrusted;
+- terminate TLS at the proxy when exposing it over a network; and
 - do not place the agent on a public route.
 
 ## Optional Mutation Lab

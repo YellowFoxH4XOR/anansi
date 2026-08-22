@@ -13,9 +13,9 @@ docker compose up --build -d
 docker compose ps
 ```
 
-The console health endpoint is `GET /api/state` and requires the same HTTP Basic
-Auth credentials as the UI. The agent has no HTTP listener; use its container
-status and logs to confirm successful polling.
+The open console health endpoint is `GET /api/state`; it does not require
+credentials. The agent has no HTTP listener, so use its container status and
+logs to confirm successful polling.
 
 The startup log should identify the number of pinned contracts and the selected
 heal adapter. An unknown `ANANSI_ADAPTER` value is rejected at startup rather
