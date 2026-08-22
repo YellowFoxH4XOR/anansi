@@ -14,7 +14,7 @@ const baseline = listingPage("none");
 const renamed = listingPage("cardrename");
 const paginated = listingPage("paginate");
 const jsLinks = listingPage("jslinks");
-const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
+const contract = parseContract(readFileSync("contracts/examples/lab-storefront.yaml", "utf8"));
 const echoUrl = contract.canaries[0]!.url;
 
 describe("normalize", () => {

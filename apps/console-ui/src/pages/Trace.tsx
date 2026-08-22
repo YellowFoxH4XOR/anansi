@@ -219,7 +219,7 @@ export default function Trace() {
     return <Skeleton lines={3} label="loading incident" />;
   }
   if (!data.rec) {
-    // 404 body is {error} — e.g. a stale tab after the demo store was re-seeded.
+    // 404 body is {error}, for example a stale tab after the store was recreated.
     return (
       <Panel>
         <span style={{ color: "var(--muted)" }}>

@@ -1,28 +1,18 @@
 // Server-rendered storefront pages. No client framework — mutations are just
 // different HTML from the same renderer, keyed off the current mutation state.
 //
-// DOM CONTRACT (do not break — the scraper, the diff pipeline, and 51 tests
+// DOM CONTRACT (do not break - the scraper, the diff pipeline, and tests
 // depend on these exact bytes):
-//   - <span class="price">$NN.NN</span> (baseline) / class="price-now" (M1)
+//   - <span class="price">$NN.NN</span>
 //   - div.price-block wrapping the price on product pages (scraper wait target)
 //   - .card[data-sku] on the listing, .product[data-sku] on product pages
 //   - h1.title / .availability with exact "in stock" | "out of stock" text
-//   - M2: ONE product (aurora-lamp) renders .price-was + .price-final and no
-//     .price at all; the other three are byte-identical to baseline
-//   - M4: every class in HASHED is replaced by its build-hash twin
-//   - M5: price TEXT becomes "USD 49,99"; element and class unchanged
-//   - S2: div.pricing > div.current > span[data-testid="price-value"]
 //   - control links are exactly /__control?mutate=<id>
 // Everything else on these pages is decoration: baseline vs mutated renders
 // must differ ONLY by the mutation itself (the diff pipeline diffs them).
 
 export type Mutation =
   | "none"
-  | "rename"
-  | "salevariant"
-  | "renest"
-  | "hashed"
-  | "locale"
   | "cardrename"
   | "paginate"
   | "jslinks";
@@ -288,8 +278,8 @@ ${body}
 // Product pages no longer mutate. Every scenario now breaks the INDEX, which is
 // stage 1 of the scrape — and the sharp edge of a stage-1 break is precisely
 // that the pages it never reached are still perfect. Keeping a mutation here
-// would blunt that: a run could fail for two reasons at once and the demo could
-// not say which.
+// would blunt that: a run could fail for two reasons at once and diagnosis
+// could not identify which one caused the incident.
 function priceMarkup(p: Product): string {
   const shown = p.sale_price ?? p.price;
   const was = p.sale_price ? `<span class="was">${money(p.price)}</span>` : "";
@@ -371,8 +361,7 @@ export function listingPage(mutation: Mutation): string {
         ? `<span class="flag">Save ${savePct(p)}%</span>`
         : "";
     // The listing renders each card through the SAME price markup as the product
-    // page, so a mutation that hits one hits the other — which is what a shared
-    // component does on a real store, and is why M2 breaks exactly one card here.
+    // page, matching the behavior of a shared component on a real store.
     // L3 keeps the anchor and its class — it still matches — and empties the
     // href. `new URL("#", base)` resolves to the index, so every product url
     // stage 1 hands on is the page it was already looking at.

@@ -5,7 +5,7 @@ import { Chip, Kpi, Panel, RunVerdict, Skeleton, VERDICT_META, ago } from "../co
 
 // A healthy fleet is silent: no incidents, no state changes, nothing on a fleet
 // card but an unchanged strip. That silence is indistinguishable from a dead
-// agent, which is the hardest thing to judge from this console. This page
+// agent, which is the hardest thing to distinguish from this console. This page
 // answers the question that replaced "did we scan?" — what has Bright Data run,
 // and what did those runs do?
 

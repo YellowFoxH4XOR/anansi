@@ -1,10 +1,10 @@
 # ADR-002: The approval gate stays — autonomy earns trust, it isn't granted
 
-**Status:** accepted (planning) · **Date:** 2026-08-15
+**Status:** accepted · **Date:** 2026-08-15
 
 ## Context
-Bright Data's CLI offers `--auto-approve`: a heal can promote itself with no review. The
-maximally "autonomous" demo would use it. We deliberately do not.
+Bright Data's CLI offers `--auto-approve`: a heal can promote itself with no review.
+We deliberately do not use it.
 
 > **Amended by [ADR-005](005-verify-v2-dropped.md).** V2 below described a
 > post-approval canary sweep that ANANSI fired itself. Under
@@ -43,7 +43,6 @@ the promotion decision itself is the conjunction of gates, never a threshold on 
 ## Consequences
 - Autonomy is preserved in the common case (gate passes → no human involved) while failure
   degrades to escalation, not to corruption.
-- The gate produces the project's best demo moment if a heal goes wrong on camera: ANANSI
-  visibly refusing to promote a bad fix.
+- A failed gate visibly explains why ANANSI refused to promote a bad fix.
 - Wall-clock per incident grows by one verification run (~seconds against goldens; the heal
   itself at 5–25 min dominates regardless).

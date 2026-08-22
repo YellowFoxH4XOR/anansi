@@ -51,6 +51,9 @@ async function main(): Promise<void> {
   }
 
   const mode = process.env.ANANSI_ADAPTER ?? "real";
+  if (mode !== "real" && mode !== "fake") {
+    throw new Error(`ANANSI_ADAPTER must be "real" or "fake", received ${JSON.stringify(mode)}`);
+  }
   const heal = mode === "fake" ? new FakeBrightData() : new RealBrightData();
   const contracts = loadContracts(process.env.ANANSI_CONTRACTS ?? "contracts");
 
@@ -83,6 +86,13 @@ async function main(): Promise<void> {
   await monitor.reconcile();
   console.log(`ANANSI monitor: ${contracts.size} pinned contract(s), heal adapter=${mode} — Bright Data owns the schedule`);
   monitor.start();
+
+  const shutdown = (signal: NodeJS.Signals): void => {
+    console.log(`${signal}: stopping ANANSI monitor`);
+    monitor.stop();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 }
 
 main().catch((e) => {

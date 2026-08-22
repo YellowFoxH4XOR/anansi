@@ -16,7 +16,7 @@ export type PreviewRow = { url?: string; fields: Record<string, unknown> };
 export function verifyV1(
   contract: Contract,
   previewRows: PreviewRow[],
-  currentSnapshots: Record<string, string>, // canary url → current (mutated) HTML
+  currentSnapshots: Record<string, string>, // captured target url → current (mutated) HTML
   failingFields: string[],
   /** What this scraper emitted while it was working, by url. The shape gate
    *  measures the healed preview against it — which is how promotion works for a

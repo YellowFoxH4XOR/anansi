@@ -204,7 +204,7 @@ export default function Fleet() {
               it cannot tell those two apart. The agent log can.
             </p>
             <p className="mt-2 text-[12.5px]" style={{ color: "var(--muted)" }}>
-              For an offline demo fleet with a full incident already on record:
+              For an offline example fleet with a full incident already on record:
             </p>
             <CommandLine cmd="npx tsx scripts/seed-demo.ts" />
           </Panel>

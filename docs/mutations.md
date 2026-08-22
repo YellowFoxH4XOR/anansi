@@ -1,87 +1,65 @@
-# Mutation Lab spec
+# Mutation Lab
 
-A small, deliberately fragile storefront we deploy ourselves, with buttons that break it in
-controlled ways. It converts "trust me, sites change" into "watch it change." Hosted live,
-one-click mutation links in the README — judging is async, so the Lab must sell itself in the
-video and survive a judge poking it days later.
+The Mutation Lab is a deliberately fragile storefront used to exercise ANANSI
+against controlled page drift. It is a development and evaluation fixture, not
+a production service.
 
-## Build
+The app is server-rendered so each mutation changes deterministic HTML. Its
+state is held in memory, resets to `none` on restart, and must run as a single
+replica.
 
-- Plain Express (or Next.js) app on Vercel. **No client framework needed** — server-rendered
-  HTML makes mutations trivial and scraping deterministic. Verified: Bright Data's infra
-  reaches vercel.app fine (their own demo shop is on Vercel; bot protection is opt-in).
-- ~4 product pages + 1 listing page. Realistic markup: nested divs, a price block, images.
-- Mutation state in a real KV (Upstash/Vercel KV) — **never a JSON file**: Vercel lambdas
-  have per-instance ephemeral filesystems, so the `/__control` write and the crawler's read
-  land on different instances and mutations intermittently vanish (a flaky, undebuggable
-  demo failure). Read the KV on every request; send `Cache-Control: no-store` on every Lab
-  page including `/__control`. Verify on D1 with two rapid curls after a mutation flip.
-  State: `{mutation: "none" | "cardrename" | "paginate" | "jslinks"}`.
-- `/__control` — the control panel: one button per mutation + RESET. Also accepts
-  `?mutate=rename` links so the README can deep-link each scenario.
-- Every page renders according to current mutation state. Reset returns to baseline instantly.
+## Control API
 
-## Why only the index
+- `GET /__control` renders the mutation panel.
+- `GET /__control?mutate=<id>` changes the active mutation.
+- `GET /__state` returns the current state for health checks.
+- Every response disables caching so a collector sees the current mutation.
 
-Product pages do not mutate, and that is the design rather than a gap. The sharp edge of a
-stage-1 break is precisely that the pages it never reached are still perfect: an audit of the
-product pages finds nothing wrong, every selector on them still matches, and the job reports
-success. Mutating them too would let a run fail for two reasons at once, and neither the demo
-nor the diagnosis could say which.
+## Listing-page scenarios
 
-## L-series — the index page (stage 1)
+Product pages remain unchanged. This isolates discovery failures: a run can
+silently omit or misroute product pages even though every selector on those
+pages still works.
 
-The scraper is two stages. Stage 1 parses the index for links and hands each one to stage 2:
+### L1: listing tile renamed
 
-```js
-const product_cards = $('.card').toArray();
-const product_urls = product_cards.map(card =>
-  new URL($(card).find('a.card-link').attr('href'), base_url).href).filter(Boolean);
+`.card` becomes `.product-tile` on the index.
+
+Expected result: the scraper discovers zero links and produces zero rows even
+though the platform job can still report success. ANANSI detects the missing
+volume relative to the collector's prior healthy run.
+
+### L2: catalogue requires interaction
+
+The index initially renders two of four cards. The remaining cards are appended
+only after clicking "Load more".
+
+Expected result: the job produces half its normal rows without a parser error.
+ANANSI detects the missing URLs and output-volume change.
+
+The held cards are absent from the initial DOM rather than hidden with CSS.
+This matters because a server-side selector would still find
+`display: none` elements.
+
+### L3: links become JavaScript-driven
+
+Each card keeps a matching anchor, but `href` becomes `#` and the real path
+moves to `data-href`.
+
+Expected result: every card resolves to the listing page. The scraper returns
+the expected number of rows, but all rows describe the wrong page. Golden
+records and cross-field checks detect the silent corruption.
+
+## Running locally
+
+```bash
+npm run lab
 ```
 
-A stage-1 break is worse than a stage-2 break and looks like less. When that selector
-misses, stage 2 is **never called**: the job reports success having collected nothing, and
-every selector on the pages it never reached still works perfectly — so an audit of the
-product pages finds nothing wrong.
+Or run it beside the production-shaped stack:
 
-`shapeDrift` cannot see any of it. Its rows are keyed by url, and a discovery break produces
-either no rows at all or rows for a url never seen before; in both cases there is nothing to
-compare against. `missingUrls` is the page-level twin: what the last good run collected and
-this one did not.
+```bash
+docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build
+```
 
-### L1 · Listing tile renamed
-- After: `.card` becomes `.product-tile` on the index only.
-- Expect: 0 links discovered → 0 rows, on a run reporting SUCCESS. The run that collected
-  nothing is indistinguishable from the run that had nothing to collect, until you compare it
-  against the pages the last good run did collect.
-
-### L2 · Half the catalogue behind "Load more"
-- After: the index renders 2 of 4 tiles; the rest arrive only on a click.
-- Expect: the row count halves on a clean run. Nothing is renamed and nothing errors, so no
-  selector is wrong — only the pages the last good run collected can say what is missing.
-- The held-back cards are genuinely **absent** from the served HTML, shipped base64-encoded
-  inside a `<script>` and appended on click. Hiding them with `display:none` would not work:
-  a cheerio-style `$('.card')` ignores CSS, so all four would still be discovered and the
-  scenario would break nothing while looking like it did.
-
-### L3 · Links go JS-driven
-- After: `href="#"`, real path in `data-href`. An SPA migration.
-- Expect: the anchors still match, so stage 1 finds four of them — and
-  `new URL("#", base)` resolves every one to the index. Stage 2 scrapes the same page four
-  times: the right NUMBER of rows, all of them the wrong page. This is the one where a row
-  count check passes and the data is entirely wrong.
-
-## Stretch (Tier 3) / cut-first
-
-- **S3 · SSR → XHR (Tier 3):** price leaves the HTML, arrives via `/api/price`. The correct
-  heal switches to `tag_response()`. Most impressive, most likely to fail on camera —
-  attempt only if D5 is clear.
-- **S4 · Lazy-load (Tier 3):** description behind infinite scroll → heal adds `load_more()`.
-
-## Real targets (breadth beyond our own toy)
-
-1. `books.toscrape.com` — purpose-built public sandbox, stable, has a list page (gives the
-   fleet a multi-stage `next_stage()` scraper and legitimate KS-on-lists usage).
-2. One real public site (candidate: Hacker News front page — titles/points/rank only,
-   **no usernames**; contracts set `exclude_fields_containing_pii`). Rules ban personal data
-   even from public pages — the exclusion is deliberate and gets one line in the README.
+Do not expose `/__control` on a production host.

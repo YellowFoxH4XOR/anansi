@@ -4,7 +4,7 @@ import { verifyV1 } from "../packages/core/verify/v1.js";
 import { parseContract } from "../packages/core/sense/contract.js";
 import { productPage, PRODUCTS } from "../apps/ui/pages.js";
 
-const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
+const contract = parseContract(readFileSync("contracts/examples/lab-storefront.yaml", "utf8"));
 const echoUrl = contract.canaries[0]!.url;
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const injectedHtml = productPage(echo); // live DOM during the incident

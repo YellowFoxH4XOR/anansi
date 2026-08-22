@@ -7,7 +7,7 @@ import { cusum } from "../packages/core/sense/cusum.js";
 import { routeErrorCode } from "../packages/core/sense/triage.js";
 import type { Contract, RunRecord } from "../packages/core/types.js";
 
-const contract: Contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
+const contract: Contract = parseContract(readFileSync("contracts/examples/lab-storefront.yaml", "utf8"));
 const urls = contract.canaries.map((c) => c.url);
 
 function healthySweep(ts = 1): RunRecord[] {

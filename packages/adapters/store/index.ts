@@ -113,8 +113,8 @@ export class Store {
     return this.readLines<StoredRun>("runs.jsonl").filter((r) => r.scraper === scraper);
   }
 
-  // Numeric history per field per URL for CUSUM, oldest first. labStateFilter lets
-  // D2 tuning use only clean-baseline (state=none) captures from the harness.
+  // Numeric history per field per URL for CUSUM, oldest first. labStateFilter
+  // can restrict analysis to clean-baseline captures from the Mutation Lab.
   history(scraper: string, labStateFilter?: string): FieldHistory {
     const out: FieldHistory = {};
     for (const r of this.runs(scraper)) {
@@ -141,8 +141,13 @@ export class Store {
 
   // Most recent snapshot for a URL captured while the sweep was healthy.
   lastGoodSnapshotRef(scraper: string, url: string): string | undefined {
-    const rs = this.runs(scraper).filter((r) => r.url === url && !r.error_code && r.snapshot_ref && r.healthy === true);
-    return rs[rs.length - 1]?.snapshot_ref;
+    let ref: string | undefined;
+    for (const r of this.runs(scraper)) {
+      if (r.error_code || r.healthy !== true) continue;
+      if (r.url === url && r.snapshot_ref) ref = r.snapshot_ref;
+      if (r.input_url === url && r.input_snapshot_ref) ref = r.input_snapshot_ref;
+    }
+    return ref;
   }
 
   /** The urls the most recent healthy run collected.
@@ -159,6 +164,35 @@ export class Store {
     if (!newest) return [];
     const sweep = newest.sweep_ts;
     return [...new Set(good.filter((r) => r.sweep_ts === sweep).map((r) => r.url))];
+  }
+
+  /** Platform inputs for the most recent healthy run. A crawl may emit rows for
+   *  many detail pages that all came from one index input. */
+  lastGoodInputUrls(scraper: string): string[] {
+    const good = this.runs(scraper).filter(
+      (r) => !r.error_code && r.healthy === true && r.input_url,
+    );
+    const newest = good[good.length - 1];
+    if (!newest) return [];
+    const sweep = newest.sweep_ts;
+    return [...new Set(good.filter((r) => r.sweep_ts === sweep).flatMap((r) => (r.input_url ? [r.input_url] : [])))];
+  }
+
+  /** Inputs distinct from the rows they produced are discovery entrypoints. */
+  lastGoodEntryUrls(scraper: string): string[] {
+    const good = this.runs(scraper).filter(
+      (r) => !r.error_code && r.healthy === true && r.input_url,
+    );
+    const newest = good[good.length - 1];
+    if (!newest) return [];
+    const sweep = newest.sweep_ts;
+    return [
+      ...new Set(
+        good
+          .filter((r) => r.sweep_ts === sweep && r.input_url !== r.url)
+          .flatMap((r) => (r.input_url ? [r.input_url] : [])),
+      ),
+    ];
   }
 
   /** The values this scraper last produced correctly, by url then field.

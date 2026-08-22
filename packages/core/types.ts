@@ -35,10 +35,16 @@ export type Contract = {
 
 // One canary row as it comes back from a run (snapshot already stripped to a ref).
 export type RunRecord = {
-  url: string; // collected input.url — every row must be attributable
+  /** The page this row describes. For a crawl this may be a followed detail
+   *  page rather than the input that started the crawl. */
+  url: string;
+  /** Bright Data's input/prime_input URL. Kept separately because a discovery
+   *  failure happens here while every followed detail page remains healthy. */
+  input_url?: string;
   fields: Record<string, unknown>;
   error_code?: string;
   snapshot_ref?: string;
+  input_snapshot_ref?: string;
   ts: number;
 };
 

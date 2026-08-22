@@ -1,5 +1,5 @@
 // Seeds a data dir with a complete M2 (silent injection) incident driven
-// through the fake heal adapter — powers console development and video prep
+// through the fake heal adapter for console development and local evaluation
 // without touching the real backend or spending credits.
 //
 // It fabricates the dataset rows a scheduled Bright Data run would have
@@ -19,7 +19,7 @@ import { driveIncident } from "../apps/agent/incident.js";
 import { productPage, PRODUCTS } from "../apps/ui/pages.js";
 import type { RunRecord } from "../packages/core/types.js";
 
-const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
+const contract = parseContract(readFileSync("contracts/examples/lab-storefront.yaml", "utf8"));
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const echoUrl = contract.canaries[0]!.url;
 const baselineHtml = productPage(echo);
