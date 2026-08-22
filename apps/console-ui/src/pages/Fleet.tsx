@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchRuns, usePoll, type FleetEntry, type IncidentRecord, type RunPoint, type StatePayload } from "../api";
+import { ResetStateControl } from "../ResetStateControl";
 import {
   Chip,
   DEPTH_META,
@@ -292,6 +293,8 @@ export default function Fleet() {
           </tbody>
         </table>
       </Panel>
+
+      <ResetStateControl />
     </div>
   );
 }

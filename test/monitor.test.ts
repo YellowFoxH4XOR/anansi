@@ -14,7 +14,8 @@ import { parseContract } from "../packages/core/sense/contract.js";
 import { Store } from "../packages/adapters/store/index.js";
 import { TemplateLlm } from "../packages/adapters/llm/index.js";
 import { FakeBrightData } from "../packages/adapters/brightdata/fake.js";
-import { Monitor, mergeJobHealth, newestJob, observedContract, pollWindow, rowsToRecords } from "../apps/agent/monitor.js";
+import { Monitor, MonitorBusyError, mergeJobHealth, newestJob, observedContract, pollWindow, rowsToRecords } from "../apps/agent/monitor.js";
+import { clearStore } from "../apps/agent/clear-store.js";
 import { BrightDataApiError } from "../packages/adapters/brightdata/api.js";
 import type { PageCapture, PageFetcher } from "../apps/agent/archive.js";
 import type { BrightDataApi, Collector, Job, JobLog } from "../packages/adapters/brightdata/api.js";
@@ -143,6 +144,75 @@ describe("auto-discovery", () => {
     const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [] });
     await monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]) }).pollOnce();
     expect(Object.keys(store.collectors())).toEqual([contract.scraper]);
+  });
+});
+
+describe("full store reset", () => {
+  it("erases runtime history and reloads only current collector identity", async () => {
+    await store.ensureCollector("stale-scraper");
+    await store.appendRun({ url: "https://stale.example", fields: { old: true }, ts: 1, scraper: "stale-scraper" });
+    await store.putIncident({ id: "old-incident", scraper: "stale-scraper" } as never);
+    await store.audit({ event: "old-event" });
+    await store.addCredits(4);
+
+    const api = new FakeApi(
+      [{ id: "c_current", name: "Current scraper", active: true, schedule: { frequency: 60_000 } }],
+      { c_current: [{ id: "old-job", finished: "2025-08-19T11:00:00Z", data_lines: 5 }] },
+    );
+    const monitor = monitorWith(api);
+
+    const result = await monitor.resetState(() => clearStore(store.dir));
+
+    expect(result.errors).toEqual([]);
+    expect(result.collectors).toEqual([
+      { collectorId: "c_current", scraper: "c_current", platformName: "Current scraper" },
+    ]);
+    expect(api.calls).toEqual(["collectors"]);
+    expect(store.collectors()).toEqual({ c_current: "healthy" });
+    expect(store.monitorCursor("c_current")).toMatchObject({
+      platform_name: "Current scraper",
+      platform_active: true,
+      platform_schedule_ms: 60_000,
+      seeded: false,
+    });
+    expect(store.incidents()).toEqual([]);
+    expect(store.runs("stale-scraper")).toEqual([]);
+    expect(store.creditsSpent()).toBe(0);
+    expect(store.auditLog()).toEqual([
+      expect.objectContaining({ event: "collector_discovered", collector: "c_current", scraper: "c_current" }),
+    ]);
+  });
+
+  it("refuses to erase state while a poll is in flight", async () => {
+    let releaseCollectors: (collectors: Collector[]) => void = () => {};
+    const collectors = new Promise<Collector[]>((resolve) => {
+      releaseCollectors = resolve;
+    });
+    const api = { collectors: () => collectors } as unknown as BrightDataApi;
+    const monitor = new Monitor({
+      api,
+      heal: new FakeBrightData(),
+      llm: new TemplateLlm(),
+      store,
+      contracts: new Map(),
+      fetchPage: pageFetcher(baselineHtml),
+      now: () => clock,
+      log: () => {},
+    });
+    const polling = monitor.pollOnce();
+    await Promise.resolve();
+    let cleared = false;
+
+    await expect(
+      monitor.resetState(async () => {
+        cleared = true;
+        return { removed: [] };
+      }),
+    ).rejects.toBeInstanceOf(MonitorBusyError);
+
+    expect(cleared).toBe(false);
+    releaseCollectors([]);
+    await polling;
   });
 });
 

@@ -60,8 +60,8 @@ export async function clearStore(
     if (fixtures > 0) removed.push(`fixtures/ (${fixtures} file(s))`);
   }
 
-  // Recreate the directory layout so the agent and console can write again
-  // without a restart.
+  // Recreate the directory layout so the agent can write and the console can
+  // read again without a restart.
   await new Store(dir).init();
   return { removed };
 }

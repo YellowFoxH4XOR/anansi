@@ -74,8 +74,12 @@ contract, including `input.url` when row attribution is needed.
 
 The console contains collected values, incident evidence, and DOM snapshots.
 It has no built-in authentication and is open to every client that can reach
-it. The default local Compose binding is loopback-only. In Coolify, configure
-the domain and network policy deliberately:
+it. Its Danger zone can erase the complete runtime store after typed
+confirmation. The reset is proxied to the agent on internal port `4800`, which
+is not published by Compose.
+
+The default local console binding is loopback-only. In Coolify, configure the
+domain and network policy deliberately:
 
 - keep the console private when possible;
 - use a Coolify or upstream access-control layer if the network is untrusted;

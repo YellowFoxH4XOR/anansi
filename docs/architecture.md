@@ -48,12 +48,22 @@ anansi/
 ├── apps/agent/
 │   ├── monitor.ts    # poll loop, fleet discovery, job ledger, state machine
 │   ├── archive.ts    # free plain-GET HTML archive (the diff's last-good source)
-│   └── incident.ts   # drives one incident through stages 2–5
-├── apps/console/     # fleet · runs · incident trace · split diff (SSR fallback)
+│   ├── incident.ts   # drives one incident through stages 2–5
+│   └── control.ts    # internal full-store reset endpoint, not host-published
+├── apps/console/     # fleet · runs · incident trace · split diff · reset proxy
 ├── apps/console-ui/  # React SPA for the console
 ├── apps/ui/          # Production Mutation Lab at anansi-lab.akshatkatiyar.com
 └── docs/decisions/   # ADRs
 ```
+
+## Full-store reset path
+
+The open console exposes a typed-confirmation Danger zone action. Its public
+API proxies the request to the agent's internal port `4800`; the console keeps
+its data-volume mount read-only. The agent rejects the reset while a poll or
+heal is active, pauses future polls, removes runtime state, fetches current
+collector identity from Bright Data, and resumes monitoring. It does not read
+job history or start a heal inside the reset request.
 
 ## Data flow, one incident
 

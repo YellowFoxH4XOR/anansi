@@ -115,12 +115,35 @@ export function usePoll<T>(path: string, intervalMs: number): T | null {
     const tick = () => get<T>(path).then((d) => alive && setData(d)).catch(() => {});
     tick();
     const t = setInterval(tick, intervalMs);
+    const refresh = () => tick();
+    window.addEventListener("anansi:refresh", refresh);
     return () => {
       alive = false;
       clearInterval(t);
+      window.removeEventListener("anansi:refresh", refresh);
     };
   }, [path, intervalMs]);
   return data;
 }
 
 export const fetchRuns = (scraper: string) => get<RunPoint[]>(`/api/runs/${encodeURIComponent(scraper)}`);
+
+export const RESET_CONFIRMATION = "RESET ALL STATE";
+
+export type ResetStatePayload = {
+  cleared: boolean;
+  removed: string[];
+  collectors: { collectorId: string; scraper: string; platformName?: string }[];
+  errors: string[];
+};
+
+export async function resetConsoleState(confirmation: string): Promise<ResetStatePayload> {
+  const response = await fetch("/api/state/reset", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ confirmation }),
+  });
+  const payload = (await response.json().catch(() => ({ error: "invalid reset response" }))) as ResetStatePayload & { error?: string };
+  if (!response.ok) throw new Error(payload.error ?? `reset failed (${response.status})`);
+  return payload;
+}

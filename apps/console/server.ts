@@ -2,10 +2,9 @@
 // when it's been built, falling back to the original server-rendered views
 // when it has not been built.
 //
-// Strictly a reader. The console holds no BRIGHTDATA_API_KEY and imports no
-// platform client: the agent is the only process that talks to Bright Data,
-// and the two meet on a shared data volume. Everything below is derived from
-// what the agent wrote there.
+// The console reads the shared store and holds no BRIGHTDATA_API_KEY. Its one
+// destructive action is proxied to the agent's internal control service, so
+// the agent remains the only process that writes the data volume.
 
 import express from "express";
 import { existsSync } from "node:fs";
@@ -18,12 +17,14 @@ import { diffPage, fleetStrip, indexPage, layout, tracePage, type Page } from ".
 import { stagesFor } from "./stages.js";
 import { readFleet, readJobs, readLastPoll } from "./read.js";
 import { failuresSince } from "./jobs.js";
+import { forwardStateReset } from "./reset.js";
 import { securityHeaders } from "./security.js";
 
 const store = new Store(process.env.ANANSI_DATA ?? "data");
 const app = express();
 app.disable("x-powered-by");
 app.use(securityHeaders);
+app.use(express.json({ limit: "1kb" }));
 
 // ---------------------------------------------------------------- shared bits
 
@@ -92,6 +93,7 @@ async function diffPayload(rec: IncidentRecord) {
 // mode; this only says whether a fix would really be issued to Scraper Studio,
 // so a fixture run can never be read as a live promotion.
 const mode = process.env.ANANSI_MODE ?? process.env.ANANSI_ADAPTER ?? "real";
+const agentControlUrl = process.env.ANANSI_AGENT_CONTROL_URL ?? "http://127.0.0.1:4800";
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -112,6 +114,11 @@ app.get("/api/state", (_req, res) => {
 
 // Bright Data's job history as ANANSI observed it. Never a list of things
 // ANANSI did — it triggers nothing.
+app.post("/api/state/reset", async (req, res) => {
+  const result = await forwardStateReset(agentControlUrl, req.body?.confirmation);
+  res.status(result.status).json(result.body);
+});
+
 app.get("/api/jobs", (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 100), 200);
   const collector = req.query.collector ? String(req.query.collector) : undefined;

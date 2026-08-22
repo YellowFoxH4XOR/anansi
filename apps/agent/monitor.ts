@@ -87,6 +87,25 @@ export type PollReport = {
   errors: string[];
 };
 
+export type RefreshedCollector = {
+  collectorId: string;
+  scraper: string;
+  platformName?: string;
+};
+
+export type StoreResetReport = {
+  removed: string[];
+  collectors: RefreshedCollector[];
+  errors: string[];
+};
+
+export class MonitorBusyError extends Error {
+  constructor() {
+    super("the monitor is handling a job; retry the reset after the current poll finishes");
+    this.name = "MonitorBusyError";
+  }
+}
+
 function emptyReport(nowMs: number): PollReport {
   return { polled_ms: nowMs, collectors: 0, jobs_seen: 0, jobs_handled: 0, jobs_deferred: 0, incidents_opened: [], errors: [] };
 }
@@ -237,6 +256,8 @@ export class Monitor {
   private readonly now: () => number;
   private readonly log: (msg: string) => void;
   private polling = false;
+  private resetting = false;
+  private running = false;
   private timer?: NodeJS.Timeout;
   private collectorCache?: { at: number; list: Collector[] };
   private lastArchiveMs = new Map<string, number>();
@@ -288,6 +309,60 @@ export class Monitor {
     const list = (await this.deps.api.collectors()).filter((c) => !!c.id);
     this.collectorCache = { at: now, list };
     return list;
+  }
+
+  /** Rebuild only the fleet identity after a destructive reset. Job history is
+   *  deliberately left empty until the normal poll resumes: the reset action
+   *  must not replay an old failure or start a heal while its HTTP request is
+   *  still open. */
+  private async refreshFleet(): Promise<RefreshedCollector[]> {
+    this.collectorCache = undefined;
+    const collectors = await this.discover();
+    const refreshed: RefreshedCollector[] = [];
+    for (const collector of collectors) {
+      const scraper = this.nameFor(collector.id);
+      await this.deps.store.ensureCollector(scraper);
+      await this.deps.store.setMonitorCursor(scraper, {
+        ...this.deps.store.monitorCursor(scraper),
+        ...(collector.name ? { platform_name: collector.name } : {}),
+        ...(collector.active != null ? { platform_active: collector.active } : {}),
+        ...(collector.schedule?.frequency ? { platform_schedule_ms: collector.schedule.frequency } : {}),
+      });
+      await this.deps.store.audit({ event: "collector_discovered", collector: collector.id, scraper });
+      refreshed.push({
+        collectorId: collector.id,
+        scraper,
+        ...(collector.name ? { platformName: collector.name } : {}),
+      });
+    }
+    return refreshed;
+  }
+
+  /** Stop future polls, wipe runtime state through the caller-owned clear
+   *  operation, and repopulate only current collector identity from Bright
+   *  Data. The existing interval resumes afterwards without an immediate job
+   *  poll, giving the console a clean fleet view before normal monitoring
+   *  continues. */
+  async resetState(clear: () => Promise<{ removed: string[] }>): Promise<StoreResetReport> {
+    if (this.polling || this.resetting) throw new MonitorBusyError();
+    const wasRunning = this.running;
+    this.resetting = true;
+    this.clearTimer();
+    try {
+      const { removed } = await clear();
+      this.lastArchiveMs.clear();
+      try {
+        const collectors = await this.refreshFleet();
+        return { removed, collectors, errors: [] };
+      } catch (error) {
+        return { removed, collectors: [], errors: [(error as Error).message] };
+      }
+    } finally {
+      this.resetting = false;
+      // A shutdown may call stop() while the reset request is in flight. Do
+      // not recreate the interval after the process has been asked to stop.
+      if (wasRunning && this.running) this.start(false);
+    }
   }
 
   /** First sight of a collector: ledger every job in the retention window as
@@ -962,18 +1037,25 @@ export class Monitor {
     return report;
   }
 
-  start(): NodeJS.Timeout {
+  start(immediate = true): NodeJS.Timeout {
+    this.running = true;
+    if (this.timer) return this.timer;
     const base = Math.max(1, this.cfg.pollSeconds) * 1000;
     // Jitter so a fleet of agents restarted together does not synchronise into
     // a thundering herd against the same REST endpoint.
     const ms = base + Math.floor(base * (this.cfg.jitterPct / 100) * (Math.random() * 2 - 1));
-    void this.pollOnce();
+    if (immediate) void this.pollOnce();
     this.timer = setInterval(() => void this.pollOnce(), Math.max(1000, ms));
     return this.timer;
   }
 
-  stop(): void {
+  private clearTimer(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+  }
+
+  stop(): void {
+    this.running = false;
+    this.clearTimer();
   }
 }

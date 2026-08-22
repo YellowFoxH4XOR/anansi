@@ -173,7 +173,7 @@ the offline write adapter is
 | Path | Purpose |
 |---|---|
 | `apps/agent/` | Polling monitor, incident driver, archive, and operator commands |
-| `apps/console/` | Read-only console API and SSR fallback |
+| `apps/console/` | Read-only data API, agent reset proxy, and SSR fallback |
 | `apps/console-ui/` | React console |
 | `apps/ui/` | Production Mutation Lab served at `anansi-lab.akshatkatiyar.com` |
 | `packages/core/` | Pure sensing, diagnosis, and verification engines |
@@ -192,8 +192,8 @@ the offline write adapter is
   rendering. JS-heavy, geo-gated, and challenged pages are marked
   low-confidence and are not used to generate confident repairs.
 - The console exposes collected values and incident evidence without built-in
-  authentication. Keep it on a trusted network or behind access controls you
-  manage outside ANANSI.
+  authentication. Its Danger zone can also erase the full runtime store after
+  typed confirmation. Any client that can reach the console can use it.
 
 ## Development disclosure
 

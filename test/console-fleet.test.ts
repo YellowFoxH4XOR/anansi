@@ -21,7 +21,7 @@ async function freshStore(): Promise<Store> {
 }
 
 /** What the monitor writes when it discovers a collector: ensureCollector puts
- *  it on the board, and monitor_seeded records the platform id it came from. */
+ *  it on the board, and a discovery event records the platform id it came from. */
 async function discover(store: Store, name: string, collectorId: string): Promise<void> {
   await store.ensureCollector(name);
   await store.audit({ event: "monitor_seeded", collector: collectorId, scraper: name, jobs: 0 });
@@ -56,12 +56,12 @@ describe("fleet discovery", () => {
     expect(contractDepth("lab-storefront", "c_x")).toBe("pinned");
   });
 
-  it("reads the platform id from the monitor's own seed events, last one winning", () => {
+  it("reads the platform id from seed and reset-refresh events, last one winning", () => {
     expect(
       discoveredIds([
         { event: "state_change", scraper: "shop", state: "healthy" },
         { event: "monitor_seeded", scraper: "shop", collector: "c_old" },
-        { event: "monitor_seeded", scraper: "shop", collector: "c_new" },
+        { event: "collector_discovered", scraper: "shop", collector: "c_new" },
       ]),
     ).toEqual({ shop: "c_new" });
   });
