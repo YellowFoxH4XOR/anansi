@@ -51,7 +51,7 @@ anansi/
 │   └── incident.ts   # drives one incident through stages 2–5
 ├── apps/console/     # fleet · runs · incident trace · split diff (SSR fallback)
 ├── apps/console-ui/  # React SPA for the console
-├── apps/ui/          # Mutation Lab — separate deploy (see mutations.md)
+├── apps/ui/          # Production Mutation Lab at anansi-lab.akshatkatiyar.com
 └── docs/decisions/   # ADRs
 ```
 

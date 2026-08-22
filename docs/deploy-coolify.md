@@ -1,18 +1,21 @@
 # Deploying ANANSI on Coolify
 
-The production Compose stack contains two services:
+The production Compose stack contains three services:
 
 | Service | Exposure | Purpose |
 |---|---|---|
+| `lab` | `https://anansi-lab.akshatkatiyar.com/` | Public, deliberately mutable storefront collected by Bright Data |
 | `agent` | private worker | Discovers collectors, evaluates completed jobs, and drives guarded repairs |
 | `console` | open HTTP | Read-only fleet, incident, and diagnosis UI |
 
-Both services mount `anansi-data`. The agent is the only writer; the console
-mounts the same volume read-only.
+The agent and console mount `anansi-data`. The agent is the only writer; the
+console mounts the same volume read-only. The Lab is stateless and isolated
+from that volume.
 
 ## Prerequisites
 
 - A Bright Data API key with access to the collectors being monitored
+- DNS for `anansi-lab.akshatkatiyar.com` pointed at the Coolify host
 - Persistent volume backups
 - An intentional network-exposure policy for the open console
 
@@ -21,7 +24,8 @@ mounts the same volume read-only.
 In Coolify, create a Docker Compose resource from this repository and use
 `docker-compose.yml`.
 
-Configure a domain for the console's internal port `4700`. Do not expose the
+Configure `https://anansi-lab.akshatkatiyar.com/` for the Lab's internal port
+`4600`, and configure the console domain for port `4700`. Do not expose the
 agent: it has no HTTP listener and needs only outbound access to Bright Data and
 the configured canary sites.
 
@@ -35,6 +39,7 @@ Set these variables on the Compose resource:
 | `ANANSI_ADAPTER` | no | `real` | `real` for CLI writes; `fake` for offline writes |
 | `WITH_BRIGHTDATA_CLI` | no | `true` | Installs the CLI in the agent image |
 | `ANANSI_POLL_SECONDS` | no | `10` | Job-history polling interval |
+| `ANANSI_LAB_PORT` | no | `4600` | Host port for local Lab access; Coolify routes to container port 4600 |
 | `GEMINI_API_KEY` | no | none | Optional LLM prompt generation |
 
 `ANANSI_ADAPTER` selects only the heal/approve/reject seam. REST reads remain
@@ -44,11 +49,13 @@ live in both modes and always require `BRIGHTDATA_API_KEY`.
 
 1. Set the environment values before the first build.
 2. Deploy the Compose resource.
-3. Confirm the `agent` log reports its contract count and selected adapter.
-4. Open `/api/state` through the console domain and verify it responds without
+3. Open `https://anansi-lab.akshatkatiyar.com/__state` and confirm it returns
+   `{"mutation":"none"}`.
+4. Confirm the `agent` log reports its contract count and selected adapter.
+5. Open `/api/state` through the console domain and verify it responds without
    credentials.
-5. Confirm the fleet matches the collectors visible in Bright Data.
-6. Configure collection schedules in Scraper Studio. ANANSI does not start
+6. Confirm the fleet matches the collectors visible in Bright Data.
+7. Configure collection schedules in Scraper Studio. ANANSI does not start
    collections.
 
 When `ANANSI_ADAPTER=real`, confirm the Bright Data CLI can authenticate
@@ -75,21 +82,22 @@ the domain and network policy deliberately:
 - terminate TLS at the proxy when exposing it over a network; and
 - do not place the agent on a public route.
 
-## Optional Mutation Lab
+## Production Mutation Lab
 
-The Mutation Lab is a testing fixture, not a production dependency. Deploy it
-as a separate Coolify resource from `apps/ui/Dockerfile` only when you need a
-controlled breakage target.
+The Lab runs in the main production Compose resource and must remain reachable
+at `https://anansi-lab.akshatkatiyar.com/` because that public origin is the
+join key used by the example contract and Bright Data dataset rows.
 
-For local evaluation, use the Compose overlay:
+Its `/__control` endpoint is intentionally open and can change the served
+markup. The Lab contains fixture data only. Never point it at real customer
+data or reuse its service for an unrelated application.
+
+For local fake-heal evaluation, add the demo overlay. The overlay keeps the same
+Lab service and changes only the agent and console modes:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build
 ```
-
-The Lab's `/__control` endpoint is intentionally unauthenticated and can change
-the served markup. Never point it at real data or expose it as a production
-service.
 
 ## Persistence and scaling
 

@@ -923,7 +923,7 @@ describe("a contract whose canaries match nothing is reported, not trusted", () 
   const seed: Job = { id: "j_seed", finished: "2025-08-19T09:00:00Z", data_lines: 4 };
 
   it("logs and audits when no canary appears in the collected rows", async () => {
-    const foreign = goldenRows().map((r) => ({ ...r, input: r.input.replace("https://lab.example.com", "http://lab:4600") }));
+    const foreign = goldenRows().map((r) => ({ ...r, input: r.input.replace("https://anansi-lab.akshatkatiyar.com", "http://lab:4600") }));
     const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [seed] }, {}, { j_seed: goldenRows(), j_1: foreign });
     const logs: string[] = [];
     const monitor = monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]), logs });

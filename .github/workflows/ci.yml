@@ -26,7 +26,9 @@ jobs:
       - name: Validate production Compose configuration
         env:
           BRIGHTDATA_API_KEY: ci-placeholder
-        run: docker compose config --quiet
+        run: |
+          docker compose config --quiet
+          docker compose config --services | grep -qx lab
       - name: Validate demo Compose configuration
         env:
           BRIGHTDATA_API_KEY: ci-placeholder

@@ -14,8 +14,9 @@ docker compose ps
 ```
 
 The open console health endpoint is `GET /api/state`; it does not require
-credentials. The agent has no HTTP listener, so use its container status and
-logs to confirm successful polling.
+credentials. The production Lab health endpoint is
+`https://anansi-lab.akshatkatiyar.com/__state`. The agent has no HTTP listener,
+so use its container status and logs to confirm successful polling.
 
 The startup log should identify the number of pinned contracts and the selected
 heal adapter. An unknown `ANANSI_ADAPTER` value is rejected at startup rather
