@@ -15,8 +15,9 @@ docker compose ps
 
 The open console health endpoint is `GET /api/state`; it does not require
 credentials. The production Lab health endpoint is
-`https://anansi-lab.akshatkatiyar.com/__state`. The agent has no HTTP listener,
-so use its container status and logs to confirm successful polling.
+`https://anansi-lab.akshatkatiyar.com/__state`. The agent's control listener is
+reachable only inside the Compose network on port `4800`; no host port is
+published. Use the agent's container status and logs to confirm polling.
 
 The startup log should identify the number of pinned contracts and the selected
 heal adapter. An unknown `ANANSI_ADAPTER` value is rejected at startup rather
@@ -71,16 +72,37 @@ Both commands preserve incidents, runs, snapshots, and audit history. Do not
 clear the store to recover a collector; deleting snapshots removes the baseline
 needed to diagnose the next failure.
 
-## Clear a non-production store
+## Reset all console state
 
-The destructive clear command requires explicit confirmation:
+The Fleet page contains an open **Danger zone** action. Expanding it and typing
+`RESET ALL STATE` permanently removes:
+
+- incidents and run history;
+- snapshots and audit events;
+- the handled-job ledger;
+- detector state and monitor cursors; and
+- heal-attempt accounting.
+
+The console delegates the operation to the agent's internal control listener,
+so the agent remains the only writer to the data volume. The monitor pauses,
+clears runtime state, reloads only current collector identity from Bright Data,
+and then resumes normal polling. Development heal fixtures are preserved.
+
+The action returns `409` while a poll or heal is in progress. Wait for that work
+to finish and retry.
+
+The console has no authentication. Any visitor who can reach it can perform
+this reset. Keep the console's network exposure consistent with that choice and
+take a backup before using the action on data that matters.
+
+The CLI remains available when the console is not running:
 
 ```bash
 npm run store:clear -- --yes
 ```
 
-Use it only for disposable local or demonstration data. Restart the agent
-afterward so it re-discovers the fleet.
+A CLI clear happens outside the live agent process, so restart the agent after
+it completes.
 
 ## Real and fake adapters
 

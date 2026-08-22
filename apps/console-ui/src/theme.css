@@ -72,7 +72,10 @@ button { cursor: pointer; }
 .btn-outline { transition: background-color 150ms ease; }
 .btn-outline:hover { background-color: var(--accent-soft); }
 .btn-neutral { background-color: var(--panel-2); transition: background-color 150ms ease; }
-.btn-neutral:hover { background-color: var(--accent-soft); }
+.btn-neutral:hover:not(:disabled) { background-color: var(--accent-soft); }
+.btn-danger { transition: background-color 150ms ease, color 150ms ease; }
+.btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
 .link-dotted { text-decoration-line: underline; text-decoration-style: dotted; text-underline-offset: 4px; }
 .link-dotted:hover { text-decoration-style: solid; }
 .link-muted { color: var(--muted); transition: color 150ms ease; }

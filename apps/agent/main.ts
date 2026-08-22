@@ -20,6 +20,8 @@ import { apiFromEnv } from "../../packages/adapters/brightdata/api.js";
 import { defaultLlm } from "../../packages/adapters/llm/index.js";
 import { Store } from "../../packages/adapters/store/index.js";
 import { Monitor } from "./monitor.js";
+import { clearStore } from "./clear-store.js";
+import { startAgentControlServer } from "./control.js";
 import { httpPageFetcher, originRewriter, viaOrigin } from "./archive.js";
 import type { Contract } from "../../packages/core/types.js";
 
@@ -84,12 +86,24 @@ async function main(): Promise<void> {
   });
 
   await monitor.reconcile();
+
+  const controlPort = Number(process.env.ANANSI_CONTROL_PORT ?? 4800);
+  if (!Number.isInteger(controlPort) || controlPort < 1 || controlPort > 65_535) {
+    throw new Error(`ANANSI_CONTROL_PORT must be a valid port, received ${JSON.stringify(process.env.ANANSI_CONTROL_PORT)}`);
+  }
+  const controlServer = startAgentControlServer({
+    reset: () => monitor.resetState(() => clearStore(store.dir)),
+    host: process.env.ANANSI_CONTROL_HOST ?? "127.0.0.1",
+    port: controlPort,
+  });
+
   console.log(`ANANSI monitor: ${contracts.size} pinned contract(s), heal adapter=${mode} — Bright Data owns the schedule`);
   monitor.start();
 
   const shutdown = (signal: NodeJS.Signals): void => {
     console.log(`${signal}: stopping ANANSI monitor`);
     monitor.stop();
+    controlServer.close();
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);

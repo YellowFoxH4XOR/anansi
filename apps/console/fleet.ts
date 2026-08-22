@@ -76,7 +76,7 @@ export type CursorLike = {
 
 export type FleetInput = {
   collectors: Record<string, CollectorState>;
-  /** store key → platform collector id, from `monitor_seeded` audit events. */
+  /** store key → platform collector id, from fleet discovery audit events. */
   discovered: Record<string, string>;
   cursors: Record<string, CursorLike>;
   jobs: readonly JobRow[];
@@ -85,12 +85,13 @@ export type FleetInput = {
 const DAY_MS = 24 * 60 * 60_000;
 const STRIP_LENGTH = 20;
 
-/** store key → platform collector id, learned from the monitor's own seed
- *  events. Append-only log, so the last one wins. */
+/** store key → platform collector id, learned from normal seeding or the
+ *  identity-only refresh after a full reset. Append-only log, so the last one
+ *  wins. */
 export function discoveredIds(auditLog: readonly Record<string, unknown>[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const e of auditLog) {
-    if (e.event !== "monitor_seeded") continue;
+    if (e.event !== "monitor_seeded" && e.event !== "collector_discovered") continue;
     if (typeof e.scraper === "string" && typeof e.collector === "string") out[e.scraper] = e.collector;
   }
   return out;

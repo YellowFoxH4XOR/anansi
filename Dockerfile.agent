@@ -20,4 +20,5 @@ RUN mkdir -p /data && chown node:node /data
 USER node
 
 ENV ANANSI_DATA=/data ANANSI_ADAPTER=real ANANSI_CONTRACTS=/app/contracts
+EXPOSE 4800
 CMD ["./node_modules/.bin/tsx", "apps/agent/main.ts"]

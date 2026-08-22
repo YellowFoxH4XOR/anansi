@@ -23,6 +23,7 @@ services:
       PORT: "4700"
       ANANSI_DATA: /data
       ANANSI_MODE: ${ANANSI_ADAPTER:-real}
+      ANANSI_AGENT_CONTROL_URL: http://agent:4800
     ports:
       - "127.0.0.1:${ANANSI_CONSOLE_PORT:-4700}:4700"
     volumes:
@@ -47,10 +48,14 @@ services:
       ANANSI_DATA: /data
       ANANSI_ADAPTER: ${ANANSI_ADAPTER:-real}
       ANANSI_POLL_SECONDS: ${ANANSI_POLL_SECONDS:-10}
+      ANANSI_CONTROL_HOST: 0.0.0.0
+      ANANSI_CONTROL_PORT: "4800"
       BRIGHTDATA_API_KEY: ${BRIGHTDATA_API_KEY:?Set BRIGHTDATA_API_KEY in .env}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - anansi-data:/data
+    expose:
+      - "4800"
     depends_on:
       lab:
         condition: service_healthy
