@@ -2,7 +2,7 @@
   "_comment": "Example structured output. Top: one canary sweep collected by scraper/lab-scraper.js, including input.url for row attribution and a truncated HTML snapshot. Bottom: the immutable incident record written after a failed sweep and completed repair loop.",
   "scraper_output": [
     {
-      "url": "https://lab.example.com/product/echo-speaker",
+      "url": "https://anansi-lab.akshatkatiyar.com/product/echo-speaker",
       "title": "Echo Portable Speaker",
       "price": 49.99,
       "sale_price": null,
@@ -10,7 +10,7 @@
       "_snapshot_html": "<!doctype html><html lang=\"en\"><head>…</head><body>…<div class=\"product\" data-sku=\"echo-speaker\">…<span class=\"price\">$49.99</span>…</div>…</body></html>"
     },
     {
-      "url": "https://lab.example.com/product/aurora-lamp",
+      "url": "https://anansi-lab.akshatkatiyar.com/product/aurora-lamp",
       "title": "Aurora Desk Lamp",
       "price": 29.99,
       "sale_price": 29.99,
@@ -28,7 +28,7 @@
       {
         "signal": "golden_band",
         "field": "price",
-        "url": "https://lab.example.com/product/echo-speaker",
+        "url": "https://anansi-lab.akshatkatiyar.com/product/echo-speaker",
         "detail": "12.99 outside band 42.49–57.49 (pinned 49.99 ± 15%)"
       }
     ],

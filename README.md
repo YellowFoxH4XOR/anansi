@@ -79,6 +79,7 @@ cp .env.example .env
 | `BRIGHTDATA_API_KEY` | none | Required for collector discovery and job history |
 | `ANANSI_ADAPTER` | `real` | `real` uses the Bright Data CLI; `fake` keeps writes offline |
 | `ANANSI_POLL_SECONDS` | `10` | Job-history polling interval |
+| `ANANSI_LAB_PORT` | `4600` | Host port for local access to the production Mutation Lab |
 | `ANANSI_CONTRACTS` | `contracts` | Directory containing optional YAML contracts |
 | `ANANSI_DATA` | `data` | Runtime state, snapshots, job ledger, and audit log |
 | `GEMINI_API_KEY` | none | Optional LLM prompt generation; deterministic fallback otherwise |
@@ -86,8 +87,9 @@ cp .env.example .env
 Contracts are optional overlays keyed by `collector_id`. A collector without a
 contract is still discovered and monitored, but its repair remains at the human
 approval gate because ANANSI has no trustworthy output specification to apply.
-Copy [the example contract](contracts/examples/lab-storefront.yaml) into
-`contracts/`, then replace its collector ID and canary URLs.
+Copy [the Lab contract template](contracts/examples/lab-storefront.yaml) into
+`contracts/`, then replace its collector ID. Its canary URLs already point to
+`https://anansi-lab.akshatkatiyar.com/`.
 
 ## Development
 
@@ -109,7 +111,7 @@ Useful development commands:
 ```bash
 npm run monitor             # monitor worker
 npm run console             # console on http://localhost:4700
-npm run lab                 # optional Mutation Lab on http://localhost:4600
+npm run lab                 # production Mutation Lab on http://localhost:4600
 npx tsx scripts/seed-demo.ts
 ```
 
@@ -123,19 +125,23 @@ BRIGHTDATA_API_KEY=... ANANSI_ADAPTER=fake npm run monitor
 
 ## Container deployment
 
-The default Compose file runs only the production services: the agent and the
-open, read-only console.
+The default Compose file runs the agent, the open read-only console, and the
+production Mutation Lab:
 
 ```bash
 docker compose up --build -d
 ```
 
+The Lab is served publicly at
+[`https://anansi-lab.akshatkatiyar.com/`](https://anansi-lab.akshatkatiyar.com/)
+so Bright Data can collect it. Its `/__control` route is intentionally able to
+change the storefront markup.
+
 The console has no built-in authentication and is bound to `127.0.0.1:4700` by
 default. Any client that can reach the console can read it, so change that
 binding only when the network exposure is intentional.
 
-The deliberately breakable Mutation Lab is not part of the production stack.
-Start it only when evaluating the repair loop:
+Use the demo overlay only to switch the write adapter to fake mode:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build
@@ -169,7 +175,7 @@ the offline write adapter is
 | `apps/agent/` | Polling monitor, incident driver, archive, and operator commands |
 | `apps/console/` | Read-only console API and SSR fallback |
 | `apps/console-ui/` | React console |
-| `apps/ui/` | Optional, deliberately breakable Mutation Lab |
+| `apps/ui/` | Production Mutation Lab served at `anansi-lab.akshatkatiyar.com` |
 | `packages/core/` | Pure sensing, diagnosis, and verification engines |
 | `packages/adapters/` | Bright Data, storage, and LLM I/O |
 | `contracts/` | Optional per-collector data contracts |

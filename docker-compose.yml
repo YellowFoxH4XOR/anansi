@@ -1,4 +1,20 @@
 services:
+  lab:
+    build:
+      context: ./apps/ui
+    environment:
+      - SERVICE_FQDN_LAB_4600
+      - PORT=4600
+    ports:
+      - "127.0.0.1:${ANANSI_LAB_PORT:-4600}:4600"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4600/__state').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   console:
     build:
       context: .
@@ -35,6 +51,9 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     volumes:
       - anansi-data:/data
+    depends_on:
+      lab:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

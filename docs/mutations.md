@@ -56,10 +56,13 @@ records and cross-field checks detect the silent corruption.
 npm run lab
 ```
 
-Or run it beside the production-shaped stack:
+Or run the complete production stack, which includes the Lab:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.demo.yml up --build
+docker compose up --build
 ```
+
+Add `-f docker-compose.demo.yml` only when the agent should use the fake write
+adapter.
 
 Do not expose `/__control` on a production host.

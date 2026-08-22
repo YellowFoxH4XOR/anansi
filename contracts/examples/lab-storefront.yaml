@@ -1,14 +1,13 @@
-# Example contract for the Mutation Lab storefront.
+# Contract template for the production Mutation Lab storefront.
 #
 # The canary URLs MUST be the exact URLs Bright Data collects — they are the
 # join key evaluate() matches dataset rows against, and a canary the rows never
-# match is a golden that silently never runs. So they carry the PUBLIC origin,
-# always. Copy this file into contracts/, then replace the example collector ID
-# and URLs before starting the agent.
+# match is a golden that silently never runs. Copy this file into contracts/ and
+# replace the example collector ID before starting the agent.
 scraper: lab-storefront
 collector_id: c_example
 canaries:
-  - url: https://lab.example.com/product/echo-speaker
+  - url: https://anansi-lab.akshatkatiyar.com/product/echo-speaker
     goldens:
       title:
         value: "Echo Portable Speaker"
@@ -16,7 +15,7 @@ canaries:
         similarity_metric: token_set_ratio
       price: { value: 49.99, tolerance_pct: 15 }
       availability: { one_of: ["in stock", "out of stock"] }
-  - url: https://lab.example.com/product/aurora-lamp
+  - url: https://anansi-lab.akshatkatiyar.com/product/aurora-lamp
     goldens:
       title:
         value: "Aurora Desk Lamp"
@@ -24,7 +23,7 @@ canaries:
         similarity_metric: token_set_ratio
       price: { value: 29.99, tolerance_pct: 20 }
       availability: { one_of: ["in stock", "out of stock"] }
-  - url: https://lab.example.com/product/graphite-keyboard
+  - url: https://anansi-lab.akshatkatiyar.com/product/graphite-keyboard
     goldens:
       title:
         value: "Graphite Mechanical Keyboard"
@@ -32,7 +31,7 @@ canaries:
         similarity_metric: token_set_ratio
       price: { value: 89.00, tolerance_pct: 15 }
       availability: { one_of: ["in stock", "out of stock"] }
-  - url: https://lab.example.com/product/tidal-bottle
+  - url: https://anansi-lab.akshatkatiyar.com/product/tidal-bottle
     goldens:
       title:
         value: "Tidal Insulated Bottle"
