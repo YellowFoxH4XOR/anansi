@@ -15,10 +15,13 @@ COPY packages/adapters/ ./packages/adapters/
 COPY apps/agent/ ./apps/agent/
 COPY contracts/ ./contracts/
 COPY scripts/probe-platform.ts ./scripts/probe-platform.ts
+COPY scripts/agent-entrypoint.sh /usr/local/bin/anansi-agent-entrypoint
 
-RUN mkdir -p /data && chown node:node /data
-USER node
+RUN chmod 0755 /usr/local/bin/anansi-agent-entrypoint \
+    && mkdir -p /data \
+    && chown node:node /data
 
 ENV ANANSI_DATA=/data ANANSI_ADAPTER=real ANANSI_CONTRACTS=/app/contracts
 EXPOSE 4800
+ENTRYPOINT ["anansi-agent-entrypoint"]
 CMD ["./node_modules/.bin/tsx", "apps/agent/main.ts"]

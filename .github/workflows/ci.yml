@@ -33,3 +33,5 @@ jobs:
         env:
           BRIGHTDATA_API_KEY: ci-placeholder
         run: docker compose -f docker-compose.yml -f docker-compose.demo.yml config --quiet
+      - name: Verify existing data-volume ownership migration
+        run: bash scripts/test-agent-volume-permissions.sh
