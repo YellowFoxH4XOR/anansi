@@ -151,8 +151,8 @@ describe("a crawl seeded at one url and following links", () => {
   // only in its own product_page_url.
   const rows = ["echo-speaker", "aurora-lamp", "tidal-bottle"].map((sku) => ({
     product_title: sku,
-    product_page_url: `https://anansi-lab.akshatkatiyar.com/product/${sku}`,
-    input: { url: "https://anansi-lab.akshatkatiyar.com" },
+    product_page_url: `https://lab.example.com/product/${sku}`,
+    input: { url: "https://lab.example.com" },
   }));
 
   it("attributes each row to its own page, not to the seed", () => {
@@ -164,14 +164,20 @@ describe("a crawl seeded at one url and following links", () => {
     expect(urls[0]).toContain("/product/echo-speaker");
   });
 
+  it("keeps the seed separately so a discovery failure can diagnose the index", () => {
+    const split = splitRow(rows[0]!);
+    expect(split.url).toContain("/product/echo-speaker");
+    expect(split.inputUrl).toBe("https://lab.example.com");
+  });
+
   it("will not adopt an off-host url as a row's identity", () => {
     // An image CDN or an analytics link must not become the page ANANSI archives.
     const r = splitRow({
       title: "x",
       thumbnail: "https://cdn.example.net/img/1.jpg",
-      input: { url: "https://anansi-lab.akshatkatiyar.com" },
+      input: { url: "https://lab.example.com" },
     });
-    expect(r.url).toBe("https://anansi-lab.akshatkatiyar.com");
+    expect(r.url).toBe("https://lab.example.com");
   });
 
   it("falls back to the seed when a row has no page of its own", () => {

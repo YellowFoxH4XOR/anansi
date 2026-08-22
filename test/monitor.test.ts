@@ -19,10 +19,10 @@ import { BrightDataApiError } from "../packages/adapters/brightdata/api.js";
 import type { PageCapture, PageFetcher } from "../apps/agent/archive.js";
 import type { BrightDataApi, Collector, Job, JobLog } from "../packages/adapters/brightdata/api.js";
 import type { JobHealth } from "../packages/core/sense/job-health.js";
-import { listingPage, PRODUCTS } from "../apps/ui/pages.js";
+import { listingPage, productPage, PRODUCTS } from "../apps/ui/pages.js";
 import type { Contract } from "../packages/core/types.js";
 
-const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
+const contract = parseContract(readFileSync("contracts/examples/lab-storefront.yaml", "utf8"));
 const COLLECTOR = contract.collector_id!;
 const echo = PRODUCTS.find((p) => p.sku === "echo-speaker")!;
 const echoUrl = contract.canaries[0]!.url;
@@ -470,6 +470,78 @@ describe("finding the page when this run named none", () => {
   });
 });
 
+describe("a discovery failure is diagnosed at the crawl entrypoint", () => {
+  it("heals the changed index instead of an unchanged product page", async () => {
+    // Incident c2d09f3b. Every healthy row has two identities:
+    //   input.url        = the index where discovery starts
+    //   product_page_url = the product the row describes
+    // splitRow kept only the latter. When discovery returned zero rows, the
+    // archive therefore fetched four unchanged product pages, found an
+    // unrelated stale diff on one of them, and promoted a product-page heal.
+    // The next scheduled run still could not discover anything and correctly
+    // quarantined the bad promotion.
+    const rootUrl = "https://lab.example.com/";
+    const crawlRows = PRODUCTS.map((p) => ({
+      input: { url: rootUrl },
+      product_page_url: new URL(`/product/${p.sku}`, rootUrl).toString(),
+      product_title: p.title,
+      category: p.category,
+      price: { value: p.sale_price ?? p.price, currency: "USD", symbol: "$" },
+      availability: p.availability,
+      description: p.description,
+      sku: p.sku,
+    }));
+    const healthy: Job = { id: "j_good", finished: "2026-08-20T22:00:00Z", data_lines: 4 };
+    const broken: Job = { id: "j_broken", finished: "2026-08-20T23:00:00Z", data_lines: 0 };
+    const api = new FakeApi(
+      [{ id: "c_crawl" }],
+      { c_crawl: [healthy] },
+      {},
+      { j_good: crawlRows, j_broken: [], j_verified: crawlRows },
+    );
+    const heal = new FakeBrightData({
+      heals: [{ status: "awaiting_approval", diff_summary: "fixed discovery", preview_result: crawlRows }],
+    });
+    let indexBroken = false;
+    const asked: string[] = [];
+    const fetchPage: PageFetcher = async (url) => {
+      asked.push(url);
+      const parsed = new URL(url);
+      const product = PRODUCTS.find((p) => parsed.pathname === `/product/${p.sku}`);
+      const html = product ? productPage(product) : listingPage(indexBroken ? "cardrename" : "none");
+      return { url, html, status: 200, bytes: Buffer.byteLength(html), low_confidence: false, fetched_ms: clock };
+    };
+    const monitor = monitorWith(api, { heal, fetchPage });
+
+    await monitor.pollCollector("c_crawl");
+    indexBroken = true;
+    pushJob(api, "c_crawl", broken);
+    clock += 60 * 60_000;
+    const report = await monitor.pollCollector("c_crawl");
+
+    const rec = store.incident(report.incidents_opened[0]!)!;
+    const healCall = heal.calls.find((c) => c.op === "heal")!;
+    const opts = healCall.args[2] as { url?: string };
+    expect(opts.url).toBe(rootUrl);
+    expect(asked.filter((url) => url === rootUrl)).toHaveLength(2);
+    expect(await store.snapshot(rec.last_good_ref!)).toContain('class="card"');
+    expect(await store.snapshot(rec.current_ref!)).toContain('class="product-tile"');
+    expect(rec.resolution).toBe("promoted");
+
+    pushJob(api, "c_crawl", {
+      id: "j_verified",
+      started: new Date(clock + 1_000).toISOString(),
+      finished: new Date(clock + 30_000).toISOString(),
+      data_lines: 4,
+    });
+    clock += 60 * 60_000;
+    await monitor.pollCollector("c_crawl");
+
+    expect(store.collectorState("c_crawl")).toBe("healthy");
+    expect(store.auditLog().some((e) => e.event === "post_promotion_regression")).toBe(false);
+  });
+});
+
 describe("quarantine is not a one-way door", () => {
   it("returns a quarantined collector to service when a run comes back clean", async () => {
     // Nothing but a human running `collector:release` ever left quarantine, so a
@@ -851,7 +923,7 @@ describe("a contract whose canaries match nothing is reported, not trusted", () 
   const seed: Job = { id: "j_seed", finished: "2025-08-19T09:00:00Z", data_lines: 4 };
 
   it("logs and audits when no canary appears in the collected rows", async () => {
-    const foreign = goldenRows().map((r) => ({ ...r, input: r.input.replace("https://anansi-lab.akshatkatiyar.com", "http://lab:4600") }));
+    const foreign = goldenRows().map((r) => ({ ...r, input: r.input.replace("https://lab.example.com", "http://lab:4600") }));
     const api = new FakeApi([{ id: COLLECTOR }], { [COLLECTOR]: [seed] }, {}, { j_seed: goldenRows(), j_1: foreign });
     const logs: string[] = [];
     const monitor = monitorWith(api, { contracts: new Map([[COLLECTOR, contract]]), logs });

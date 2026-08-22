@@ -44,8 +44,8 @@ describe("fleet discovery", () => {
 
   it("marks a contract-pinned collector as the deeper tier", async () => {
     const store = await freshStore();
-    await discover(store, "lab-storefront", "c_msyy76jk20f9e9mrh5");
-    expect(readFleet(store)[0]).toMatchObject({ contract: "pinned", collectorId: "c_msyy76jk20f9e9mrh5" });
+    await discover(store, "lab-storefront", "c_example");
+    expect(readFleet(store)[0]).toMatchObject({ contract: "pinned", collectorId: "c_example" });
   });
 
   it("refuses to guess the depth when the agent never recorded a discovery", () => {
@@ -173,7 +173,7 @@ describe("the board shows what Bright Data calls a scraper", () => {
   // is a name only ANANSI has ever used.
   it("prefers the platform name over the store key", async () => {
     const store = await freshStore();
-    await discover(store, "lab-storefront", "c_msyy76jk20f9e9mrh5");
+    await discover(store, "lab-storefront", "c_example");
     await store.setMonitorCursor("lab-storefront", {
       ...store.monitorCursor("lab-storefront"),
       platform_name: "anansi-lab",

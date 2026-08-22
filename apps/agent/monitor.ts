@@ -142,10 +142,11 @@ export function rowsToRecords(
   const records: RunRecord[] = [];
   let unattributed = 0;
   for (const row of rows) {
-    const { url, error_code, fields } = splitRow(row as RawRow);
+    const { url, inputUrl, error_code, fields } = splitRow(row as RawRow);
     if (!url) unattributed++;
     records.push({
       url: url ?? "unknown",
+      ...(inputUrl ? { input_url: inputUrl } : {}),
       fields,
       ...(error_code ? { error_code } : {}),
       ...(url && snapshotRefs[url] ? { snapshot_ref: snapshotRefs[url] } : {}),
@@ -626,13 +627,20 @@ export class Monitor {
 
     // Resolved BEFORE the archive runs, because it is also where the urls come
     // from when this run produced none.
-    const knownGood = await this.knownGoodFor(collectorId, name, siblings, job.id);
-    const targets = this.targetUrls(contract, records, merged.signals, knownGood);
+    const needsEntrypoint = missing.length > 0 || records.length === 0;
+    const recovered = await this.knownGoodFor(collectorId, name, siblings, job.id, needsEntrypoint);
+    const knownGood = recovered.fields;
+    const diagnosisUrls = needsEntrypoint ? recovered.entryUrls : [];
+    const targets = this.targetUrls(contract, records, merged.signals, knownGood, diagnosisUrls);
     if (targets.length === 0) {
       this.log(`[${name}] job ${job.id}: no page to capture — this run named no url, no contract pins one, and no earlier run of this collector produced one`);
     }
     const { refs, captures } = await this.archive(targets, true);
-    const withRefs = records.map((r) => (refs[r.url] ? { ...r, snapshot_ref: refs[r.url] } : r));
+    const withRefs = records.map((r) => ({
+      ...r,
+      ...(refs[r.url] ? { snapshot_ref: refs[r.url] } : {}),
+      ...(r.input_url && refs[r.input_url] ? { input_snapshot_ref: refs[r.input_url] } : {}),
+    }));
     await this.recordRun(name, withRefs, {}, job.id, ts, false);
 
     // "Returned 0 rows" was the one failure that could never be diagnosed:
@@ -643,9 +651,13 @@ export class Monitor {
     // nothing. These stand in for Diagnose only; recordRun above has already
     // written the real (empty) result, and inventing rows in the store would be
     // the same lie in a worse place.
-    const diagnosable: RunRecord[] = withRefs.length
-      ? withRefs
-      : Object.entries(refs).map(([url, ref]) => ({ url, fields: {}, snapshot_ref: ref, ts }));
+    const represented = new Set(withRefs.flatMap((r) => (r.snapshot_ref ? [r.url] : [])));
+    const diagnosable: RunRecord[] = [
+      ...withRefs,
+      ...Object.entries(refs)
+        .filter(([url]) => !represented.has(url))
+        .map(([url, ref]) => ({ url, fields: {}, snapshot_ref: ref, ts })),
+    ];
 
     // An archive fetch that was itself blocked, 404'd or timed out is a routable
     // fact about the target, not noise: no selector edit repairs a 403, and a
@@ -700,6 +712,7 @@ export class Monitor {
     const schema = this.platformFor(collectorId)?.output_schema;
     const rec = await driveIncident(incident, contract ?? observedContract(collectorId, schema), {
       knownGood,
+      diagnosisUrls,
       bd: this.deps.heal,
       llm: this.deps.llm,
       store,
@@ -735,31 +748,58 @@ export class Monitor {
    *  correct output. Costs one GET, and only on the incident path when the store
    *  came back empty.
    *
+   *  The same read also recovers a crawl's input URL when older stored runs
+   *  predate input_url persistence. That is the page Diagnose needs when the
+   *  discovery stage stops producing detail rows.
+   *
    *  Works for every collector because it reads the rows a scraper emits, not a
    *  page it may never have collected. */
-  private async knownGoodFor(collectorId: string, name: string, siblings: readonly Job[], failedJobId: string): Promise<KnownGood> {
+  private async knownGoodFor(
+    collectorId: string,
+    name: string,
+    siblings: readonly Job[],
+    failedJobId: string,
+    recoverEntrypoints = false,
+  ): Promise<{ fields: KnownGood; entryUrls: string[] }> {
     const stored = this.deps.store.lastGoodFields(name);
-    if (Object.keys(stored).length > 0) return stored;
+    const storedInputs = this.deps.store.lastGoodInputUrls(name);
+    const entryUrls = new Set(this.deps.store.lastGoodEntryUrls(name));
+    if (Object.keys(stored).length > 0 && (!recoverEntrypoints || storedInputs.length > 0)) {
+      return { fields: stored, entryUrls: [...entryUrls] };
+    }
 
     const candidates = [...siblings]
       .filter((j) => j.id !== failedJobId && (j.data_lines ?? 0) > 0 && !(j.failed_pages ?? 0))
       .sort((a, b) => Date.parse(b.finished ?? b.started ?? "") - Date.parse(a.finished ?? a.started ?? ""));
 
+    const recovered: KnownGood = {};
+    let sawInput = storedInputs.length > 0;
     for (const cand of candidates.slice(0, 3)) {
       const rows = await this.deps.api.dataset(cand.id).catch(() => undefined);
       if (!Array.isArray(rows) || rows.length === 0) continue;
-      const out: KnownGood = {};
       for (const row of rows) {
-        const { url, fields } = splitRow(row as RawRow, this.platformFor(collectorId)?.output_schema);
+        const { url, inputUrl, fields } = splitRow(row as RawRow, this.platformFor(collectorId)?.output_schema);
         const kept = Object.fromEntries(Object.entries(fields).filter(([, v]) => v != null));
-        if (url && Object.keys(kept).length) out[url] = kept;
+        if (url && Object.keys(kept).length) recovered[url] = kept;
+        if (inputUrl) {
+          sawInput = true;
+          if (url && inputUrl !== url) entryUrls.add(inputUrl);
+        }
       }
-      if (Object.keys(out).length) {
-        this.log(`[${name}] no known-good rows in the store — recovered ${Object.keys(out).length} from job ${cand.id}, the platform's last run that produced any`);
-        return out;
+      if ((Object.keys(stored).length > 0 || Object.keys(recovered).length > 0) && (!recoverEntrypoints || sawInput)) {
+        if (Object.keys(stored).length === 0 && Object.keys(recovered).length > 0) {
+          this.log(`[${name}] no known-good rows in the store — recovered ${Object.keys(recovered).length} from job ${cand.id}, the platform's last run that produced any`);
+        }
+        return {
+          fields: Object.keys(stored).length > 0 ? stored : recovered,
+          entryUrls: [...entryUrls],
+        };
       }
     }
-    return {};
+    return {
+      fields: Object.keys(stored).length > 0 ? stored : recovered,
+      entryUrls: [...entryUrls],
+    };
   }
 
   /** Return a quarantined collector to service on the evidence of a clean run.
@@ -807,12 +847,14 @@ export class Monitor {
     records: RunRecord[],
     signals: Violation[] = [],
     knownGood: KnownGood = {},
+    preferred: readonly string[] = [],
   ): string[] {
     const hit = signals.flatMap((s) => (s.url ? [s.url] : []));
+    const inputs = records.flatMap((r) => (r.input_url ? [r.input_url] : []));
     const canaries = contract?.canaries.map((c) => c.url) ?? [];
     const collected = records.map((r) => r.url).filter((u) => u !== "unknown");
     const previously = Object.keys(knownGood).filter((u) => u && u !== "unknown");
-    return [...new Set([...hit, ...canaries, ...collected, ...previously])];
+    return [...new Set([...preferred, ...hit, ...inputs, ...canaries, ...collected, ...previously])];
   }
 
   private async archive(urls: string[], force: boolean): Promise<ArchiveResult> {
@@ -843,9 +885,11 @@ export class Monitor {
   ): Promise<void> {
     for (const r of records) {
       const snapshot_ref = r.snapshot_ref ?? refs[r.url];
+      const input_snapshot_ref = r.input_snapshot_ref ?? (r.input_url ? refs[r.input_url] : undefined);
       await this.deps.store.appendRun({
         ...r,
         ...(snapshot_ref ? { snapshot_ref } : {}),
+        ...(input_snapshot_ref ? { input_snapshot_ref } : {}),
         scraper: name,
         healthy,
         // The platform job id groups rows into one run. Unlike the scheduler's

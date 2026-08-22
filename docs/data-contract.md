@@ -17,7 +17,7 @@ goldens are inert and the agent says so at load time.
 
 ```yaml
 scraper: lab-storefront          # display name, also the store key
-collector_id: c_msyy76jk20f9e9mrh5   # the join to a discovered scraper — without it, inert
+collector_id: c_example                # join to a discovered scraper; replace this value
 canaries:                        # 3–5 pinned, known-stable URLs
   - url: https://<lab>/product/echo-speaker
     goldens:                     # hand-pinned correct values = ground truth

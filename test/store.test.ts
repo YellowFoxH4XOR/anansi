@@ -13,7 +13,7 @@ import { rawToRun } from "../apps/agent/incident.js";
 import { resetCollector } from "../apps/agent/reset-collector.js";
 import { clearStore } from "../apps/agent/clear-store.js";
 
-const contract = parseContract(readFileSync("contracts/lab-storefront.yaml", "utf8"));
+const contract = parseContract(readFileSync("contracts/examples/lab-storefront.yaml", "utf8"));
 
 let store: Store;
 
@@ -69,15 +69,15 @@ describe("known-good values", () => {
 
 describe("platform row normalisation", () => {
   it("reads the snapshot from Studio's page_html and keeps it out of fields", async () => {
-    // Shape taken verbatim from a live c_msyy76jk20f9e9mrh5 run.
+    // Shape taken from a live collector run.
     const row = {
-      url: "https://anansi-lab.akshatkatiyar.com/product/echo-speaker",
+      url: "https://lab.example.com/product/echo-speaker",
       title: "Echo Portable Speaker",
       price: 49.99,
       sale_price: null,
       availability: "in stock",
       page_html: '<html><span class="price">$49.99</span></html>',
-      page_html_url: "https://anansi-lab.akshatkatiyar.com/product/echo-speaker",
+      page_html_url: "https://lab.example.com/product/echo-speaker",
     };
     const run = await rawToRun(row, store, 1);
 
@@ -193,4 +193,3 @@ describe("store clear", () => {
     expect(existsSync(join(store.dir, "fixtures", "heal-m1.json"))).toBe(false);
   });
 });
-

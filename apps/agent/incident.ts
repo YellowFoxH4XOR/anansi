@@ -48,6 +48,9 @@ export type IncidentDeps = {
    *  Monitor.knownGoodFor(). Merged over the store's own, which is empty in
    *  exactly the case this exists for. */
   knownGood?: KnownGood;
+  /** Pages where discovery starts. When rows disappear, these outrank the
+   *  unchanged detail pages named by missing-row signals. */
+  diagnosisUrls?: readonly string[];
   log?: (msg: string) => void;
 };
 
@@ -63,7 +66,14 @@ export async function rawToRun(
   const split = splitRow(raw, schema);
   const html = snapshotHtml ?? split.snapshotHtml;
   const snapshot_ref = html ? await store.saveSnapshot(html) : undefined;
-  return { url: split.url ?? "unknown", fields: split.fields, error_code: split.error_code, snapshot_ref, ts };
+  return {
+    url: split.url ?? "unknown",
+    ...(split.inputUrl ? { input_url: split.inputUrl } : {}),
+    fields: split.fields,
+    error_code: split.error_code,
+    snapshot_ref,
+    ts,
+  };
 }
 
 export async function driveIncident(
@@ -114,10 +124,12 @@ export async function driveIncident(
   // Every URL worth diffing, best first: one a signal actually named, then any
   // page the archive captured. Picking the first named URL and giving up when it
   // had no baseline discarded a perfectly diffable page sitting next to it.
-  const candidates = [
+  const preferred = new Set(deps.diagnosisUrls ?? []);
+  const candidates = [...new Set([
+    ...(deps.diagnosisUrls ?? []),
     ...incident.signals.flatMap((s) => (s.url ? [s.url] : [])),
     ...incident.records.flatMap((r) => (r.snapshot_ref ? [r.url] : [])),
-  ];
+  ])];
   const scored = candidates
     .map((url) => ({
       url,
@@ -126,7 +138,7 @@ export async function driveIncident(
     }))
     .filter((c) => c.current);
   // A baseline is a bonus, so prefer a page that has one — but never require it.
-  const diffable = scored.find((c) => c.lastGood) ?? scored[0];
+  const diffable = scored.find((c) => preferred.has(c.url)) ?? scored.find((c) => c.lastGood) ?? scored[0];
 
   if (!diffable?.current) {
     // The one thing Diagnose genuinely cannot work without is the page as it is
@@ -143,8 +155,16 @@ export async function driveIncident(
   if (diffable.lastGood) rec.last_good_ref = diffable.lastGood;
   rec.current_ref = diffable.current;
   const lastGoodHtml = diffable.lastGood ? await store.snapshot(diffable.lastGood) : undefined;
-  const currentHtml = await store.snapshot(diffable.current);
-  const currentSnapshots: Record<string, string> = { [hitUrl]: currentHtml };
+  const currentSnapshotRefs = new Map(
+    incident.records.flatMap((r) => (r.snapshot_ref ? [[r.url, r.snapshot_ref] as const] : [])),
+  );
+  const currentSnapshots = Object.fromEntries(
+    await Promise.all(
+      [...currentSnapshotRefs].map(async ([url, ref]) => [url, await store.snapshot(ref)] as const),
+    ),
+  );
+  const currentHtml = currentSnapshots[hitUrl] ?? await store.snapshot(diffable.current);
+  currentSnapshots[hitUrl] = currentHtml;
 
   // What this scraper itself last emitted for these pages. Present for every
   // collector, contract or not, HTML or not — and the source of the one line the

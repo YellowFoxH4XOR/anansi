@@ -190,10 +190,12 @@ export function previewRows(h: HealResponse): RawRow[] {
 export function splitRow(raw: RawRow, schema?: OutputSchema): {
   snapshotHtml?: string;
   url?: string;
+  inputUrl?: string;
   error_code?: string;
   fields: Record<string, unknown>;
 } {
   const { _snapshot_html, url, input, prime_input, error, error_code, ...rest } = raw;
+  const inputUrl = asUrl(input) ?? asUrl(prime_input);
 
   // Two name-independent passes, because the author owns every name here.
   // Without them a scraper whose HTML tag is called `html_dump` does not merely
@@ -222,10 +224,11 @@ export function splitRow(raw: RawRow, schema?: OutputSchema): {
 
   return {
     snapshotHtml,
+    inputUrl,
     // Dataset rows carry no `url`; the collected page is `input`/`prime_input`,
     // and arrives as {"url": …} rather than a bare string. An unattributed row
     // breaks goldens and last-good snapshot lookup alike.
-    url: asUrl(url) ?? ownUrl(rest, asUrl(input) ?? asUrl(prime_input)) ?? asUrl(input) ?? asUrl(prime_input),
+    url: asUrl(url) ?? ownUrl(rest, inputUrl) ?? inputUrl,
     // `error` without `error_code` is a real shape: keep the failure rather than
     // letting the row pass as healthy because one of two field names was absent.
     error_code: error_code ?? codeFromError(error),
