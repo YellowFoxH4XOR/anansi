@@ -1,4 +1,4 @@
-// Express app for the Mutation Lab. Rules that keep the demo debuggable:
+// Express app for the Mutation Lab. Rules that keep each scenario deterministic:
 // - the KV is read on EVERY request (no module-level caching of state)
 // - Cache-Control: no-store on EVERY response, /__control included
 // - RESET returns to baseline instantly
